@@ -10,7 +10,7 @@
  * כדי שכיול המשקולות לא ישבור אותן.
  */
 import { describe, it, expect } from "vitest";
-import { profileBoard, applyPreferences } from "../board-profile";
+import { profileBoard, applyPreferences, selectLiveWidgets, hasSignal } from "../board-profile";
 import type { Board, Col, Item } from "../board-intelligence";
 
 /* ------------------------------------------------------------ בוני-עזר */
@@ -186,6 +186,71 @@ describe("applyPreferences — 'מה חשוב לך' גובר על הסטטיסט
     const before = JSON.parse(JSON.stringify(base));
     applyPreferences(base, { importantColumns: ["phone"] });
     expect(base).toEqual(before);
+  });
+});
+
+describe("שכבת הרלוונטיות — מה מרוויח מקום על הלוח (משוב מיטל 1.9)", () => {
+  /** לוח עם עמודה מספרת-סיפור ועמודה בלי שום סיפור (98% ערך אחד). */
+  function noisyBoard(): Board {
+    const cols = [
+      col("status", "סטטוס", "status", {
+        labels: [
+          { id: 1, name: "פעיל", color: "#00c875" },
+          { id: 2, name: "נותק", color: "#e2445c" },
+        ],
+      }),
+      col("dull", "ארץ", "status", {
+        labels: [{ id: 1, name: "ישראל", color: "#579bfc" }, { id: 2, name: "אחר", color: "#fdab3d" }],
+      }),
+      col("owner", "אחראי", "people"),
+    ];
+    const items = Array.from({ length: 50 }, (_, i) =>
+      item(`ר${i}`, {
+        status: i % 2 ? "פעיל" : "נותק",
+        dull: i === 0 ? "אחר" : "ישראל", // 98% אותו ערך — צ'קבוקס מחופש לקטגוריה
+        owner: "דנה",                    // אחראי יחיד — "חלוקה" בלי חלוקה
+      }, cols)
+    );
+    return { id: "b", name: "לוח", columns: cols, items };
+  }
+
+  it("hasSignal: פילוח שכמעט כולו ערך אחד או חלוקה עם שם יחיד — בלי אות", () => {
+    const p = profileBoard(noisyBoard());
+    expect(hasSignal(p.columns.find((c) => c.id === "status")!)).toBe(true);
+    expect(hasSignal(p.columns.find((c) => c.id === "dull")!)).toBe(false);
+    expect(hasSignal(p.columns.find((c) => c.id === "owner")!)).toBe(false);
+  });
+
+  it("selectLiveWidgets: רכיבים בלי אות לא מוצגים — אבל לא נעלמים, הם ב-more", () => {
+    const p = profileBoard(noisyBoard());
+    const { show, more } = selectLiveWidgets(p, {});
+    expect(show.some((w) => w.col === "ארץ")).toBe(false);
+    expect(show.some((w) => w.col === "אחראי")).toBe(false);
+    expect(more.some((w) => w.col === "ארץ")).toBe(true);
+  });
+
+  it("רכיב שהמשתמש הצמיד (⭐) מוצג ראשון — גם אם אין לו אות סטטיסטי", () => {
+    const p = profileBoard(noisyBoard());
+    const { show } = selectLiveWidgets(p, { pinnedWidgets: ["breakdown|ארץ"] });
+    expect(show[0]).toMatchObject({ kind: "breakdown", col: "ארץ", pinned: true });
+  });
+
+  it("רכיב שהמשתמש הסתיר (✕) לא מוצג, גם עם אות — וזמין ב-more לשחזור", () => {
+    const p = profileBoard(noisyBoard());
+    const { show, more } = selectLiveWidgets(p, { hiddenWidgets: ["breakdown|סטטוס"] });
+    expect(show.some((w) => w.col === "סטטוס")).toBe(false);
+    expect(more.some((w) => w.col === "סטטוס")).toBe(true);
+  });
+
+  it("תקרה: לכל היותר 6 רכיבים מוצגים — לוח רגוע, לא עמוס", () => {
+    const p = profileBoard(donorsBoard());
+    const { show } = selectLiveWidgets(p, {});
+    expect(show.length).toBeLessThanOrEqual(6);
+  });
+
+  it("הצמדת רכיב מקדמת את העמודה שלו גם בפרופיל (הוויזרד רואה את זה)", () => {
+    const p = applyPreferences(profileBoard(donorsBoard()), { pinnedWidgets: ["numberSummary|סכום תרומה"] });
+    expect(p.columns[0].title).toBe("סכום תרומה");
   });
 });
 

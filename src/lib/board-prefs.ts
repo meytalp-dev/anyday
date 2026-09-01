@@ -22,6 +22,15 @@ export function sanitizePrefs(raw: unknown): BoardPrefs {
       .map((s) => s.slice(0, 100))
       .slice(0, MAX_MARKED_COLUMNS);
   }
+  // Widget keys from the live board's ⭐/✕ — same bounds as column marks.
+  const keyList = (v: unknown): string[] | undefined =>
+    Array.isArray(v)
+      ? v.filter((x): x is string => typeof x === "string").map((s) => s.slice(0, 120)).slice(0, MAX_MARKED_COLUMNS)
+      : undefined;
+  const pinned = keyList(p.pinnedWidgets);
+  if (pinned) out.pinnedWidgets = pinned;
+  const hiddenW = keyList(p.hiddenWidgets);
+  if (hiddenW) out.hiddenWidgets = hiddenW;
   if (typeof p.goalsText === "string") out.goalsText = p.goalsText.slice(0, MAX_GOALS_CHARS);
   if (p.toneOverrides && typeof p.toneOverrides === "object" && !Array.isArray(p.toneOverrides)) {
     const t: Record<string, string> = {};

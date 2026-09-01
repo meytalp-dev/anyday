@@ -732,34 +732,30 @@ function DotProfile({ d, entity, onClose }: { d: Dot; entity: string; onClose: (
   );
 }
 
-/* ===== "מה חשוב לך בלוח הזה" (W2-1) =====
-   The user's half of the board profile. The engine ranks columns by structure;
-   this card records what the PERSON says matters, and applyPreferences on the
-   server lets the person win. Saved per org+board in board_preferences. */
-
-interface ProfileCol { id: string; title: string; bucket: string; score: number }
+/* ===== "מה מטרת הלוח" (W2-1, גרסה 2 — משוב מיטל 1.9) =====
+   The chips UX is gone: marking what matters now happens ON the board itself
+   (⭐ pins a card, ✕ hides one). What remains here is the one thing a card
+   cannot say — the board's PURPOSE in the user's own words, which feeds the
+   wizard's AI. Saving spreads the fetched document and changes only
+   goalsText: a partial write would wipe the pins the user just made. */
 
 function PrefsCard({ boardId, boardName }: { boardId: string; boardName: string }) {
   const [open, setOpen] = useState(false);
   const [editable, setEditable] = useState(true);
-  const [marked, setMarked] = useState<string[]>([]);
+  const [prefs, setPrefs] = useState<Record<string, unknown>>({});
   const [goals, setGoals] = useState("");
-  const [cols, setCols] = useState<ProfileCol[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
 
-  /* The saved prefs are cheap — read them right away so the closed row can say
-     whether this board was ever configured. The PROFILE (a full board read) is
-     fetched only when the card is opened. */
   useEffect(() => {
     let alive = true;
     fetch(`/api/board-prefs?board=${boardId}`, { cache: "no-store" })
       .then((r) => r.json())
       .then((d) => {
         if (!alive || d.error) return;
-        setMarked(d.prefs?.importantColumns ?? []);
-        setGoals(d.prefs?.goalsText ?? "");
+        setPrefs((d.prefs as Record<string, unknown>) ?? {});
+        setGoals((d.prefs?.goalsText as string) ?? "");
         setEditable(d.editable !== false);
         setLoaded(true);
       })
@@ -767,31 +763,16 @@ function PrefsCard({ boardId, boardName }: { boardId: string; boardName: string 
     return () => { alive = false; };
   }, [boardId]);
 
-  function toggleOpen() {
-    const next = !open;
-    setOpen(next);
-    if (next && cols === null) {
-      fetch(`/api/board-profile?boards=${boardId}`, { cache: "no-store" })
-        .then((r) => r.json())
-        .then((d) => {
-          const p = d.profiles?.[0];
-          if (p) setCols((p.columns as ProfileCol[]).filter((c) => c.bucket !== "meta"));
-          else setMsg(d.error || "לא הצלחנו לקרוא את מבנה הלוח");
-        })
-        .catch(() => setMsg("לא הצלחנו לפנות לשרת"));
-    }
-  }
-
   async function save() {
     setBusy(true); setMsg(null);
     try {
       const r = await fetch("/api/board-prefs", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ boardId, prefs: { importantColumns: marked, goalsText: goals } }),
+        body: JSON.stringify({ boardId, prefs: { ...prefs, goalsText: goals } }),
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) setMsg(d.error || "השמירה נכשלה");
-      else { setMsg("נשמר ✓"); setOpen(false); }
+      else { setPrefs({ ...prefs, goalsText: goals }); setMsg("נשמר ✓"); setOpen(false); }
     } catch {
       setMsg("לא הצלחנו לפנות לשרת");
     } finally {
@@ -800,38 +781,23 @@ function PrefsCard({ boardId, boardName }: { boardId: string; boardName: string 
   }
 
   if (!loaded) return null; // personal mode / not signed in — the card simply is not there
-  const configured = marked.length > 0 || goals.trim().length > 0;
+  const savedGoals = ((prefs.goalsText as string) ?? "").trim();
 
   return (
-    <div style={{ background: C.panel, border: "1px solid #ECEBF5", borderInlineStart: `4px solid ${configured ? C.teal : C.amber}`, borderRadius: 16, marginBottom: 16, animation: "rise .4s both" }}>
-      <button onClick={toggleOpen} aria-expanded={open} style={{ width: "100%", border: "none", background: "none", fontFamily: "inherit", cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: "12px 18px", textAlign: "right" }}>
+    <div style={{ background: C.panel, border: "1px solid #ECEBF5", borderInlineStart: `4px solid ${savedGoals ? C.teal : C.amber}`, borderRadius: 16, marginBottom: 16, animation: "rise .4s both" }}>
+      <button onClick={() => setOpen(!open)} aria-expanded={open} style={{ width: "100%", border: "none", background: "none", fontFamily: "inherit", cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: "12px 18px", textAlign: "right" }}>
         <span style={{ fontSize: 16 }}>🎯</span>
-        <span style={{ fontSize: 13.5, fontWeight: 800, color: C.ink }}>מה חשוב לך ב״{boardName}״?</span>
-        <span style={{ fontSize: 12, color: C.muted, flex: 1 }}>
-          {configured ? `${marked.length ? `${marked.length} עמודות סומנו` : ""}${marked.length && goals.trim() ? " · " : ""}${goals.trim() ? "יש תיאור מטרה" : ""}` : "עדיין לא הגדרתם — הלוח מנחש לבד"}
+        <span style={{ fontSize: 13.5, fontWeight: 800, color: C.ink }}>{`מה מטרת ״${boardName}״?`}</span>
+        <span style={{ fontSize: 12, color: C.muted, flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          {savedGoals ? `"${savedGoals}"` : "ספרו במשפט — וסמנו ★ על הרכיבים החשובים בלוח עצמו"}
         </span>
         <span aria-hidden style={{ fontSize: 11, color: C.muted }}>{open ? "▴" : "▾"}</span>
       </button>
       {open && (
         <div style={{ padding: "0 18px 16px" }}>
           <div style={{ fontSize: 12, color: C.muted, marginBottom: 8, lineHeight: 1.6 }}>
-            סמנו את העמודות שחשובות לכם — הן יובילו את הלוח ואת הדשבורדים שייבנו, לפני מה שהמערכת מזהה לבד.
+            המשפט הזה מזין את הוויזרד כשבונים דשבורד חדש. ומה שחשוב לראות למעלה — מסמנים ★ ישירות על הכרטיס בלוח; ✕ מסתיר כרטיס פחות רלוונטי.
           </div>
-          {cols === null && !msg && <Spinner label="קוראים את מבנה הלוח..." />}
-          {cols && (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginBottom: 12 }}>
-              {cols.map((c) => {
-                const on = marked.includes(c.id);
-                return (
-                  <button
-                    key={c.id} onClick={() => setMarked(on ? marked.filter((x) => x !== c.id) : [...marked, c.id])}
-                    disabled={!editable} aria-pressed={on}
-                    style={{ border: `1.5px solid ${on ? C.grape : "#E6E4F0"}`, background: on ? C.grapeL : "#fff", color: on ? C.grape : C.muted, borderRadius: 99, padding: "5px 12px", fontSize: 12, fontWeight: on ? 700 : 500, cursor: editable ? "pointer" : "default", fontFamily: "inherit" }}
-                  >{c.title}</button>
-                );
-              })}
-            </div>
-          )}
           <textarea
             value={goals} onChange={(e) => setGoals(e.target.value)} disabled={!editable}
             placeholder="במילים שלכם: בשביל מה הלוח הזה? מה אתם רוצים לראות בו כל בוקר?"
@@ -1121,12 +1087,48 @@ function DashboardWizard({ boards, onClose, onCreated }: {
 }
 
 /* ===== dashboard (charts fallback) ===== */
+/** A live-board chart plus its curation identity (key+board) and ⭐ state. */
+type LiveChart = Widget & { key: string; boardId: string; pinned: boolean };
+interface MoreWidget { key: string; boardId: string; label: string; hiddenByUser: boolean }
+
 function Dashboard({ names, empty = false, boards = [] }: { names: string[]; empty?: boolean; boards?: BoardOpt[] }) {
-  const [d, setD] = useState<{ kpis: KPI[]; charts: Widget[]; attention: { count: number; items: { name: string; why: string; board: string }[] }; coverage?: Cov; source: string } | null>(null);
+  const [d, setD] = useState<{ kpis: KPI[]; charts: LiveChart[]; more?: MoreWidget[]; attention: { count: number; items: { name: string; why: string; board: string }[] }; coverage?: Cov; source: string } | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const load = () => { setD(null); setErr(null);
     fetch("/api/dashboard", { cache: "no-store" }).then((r) => r.json()).then((x) => x.error ? setErr(x.error) : setD(x)).catch(() => setErr("שגיאה"));
   };
+
+  /* ⭐/✕ write to board_preferences: read the CURRENT doc, change one list,
+     write the whole doc back — a partial POST would wipe the other fields. */
+  async function updatePrefs(boardId: string, change: (p: Record<string, unknown>) => Record<string, unknown>) {
+    try {
+      const cur = await fetch(`/api/board-prefs?board=${boardId}`, { cache: "no-store" }).then((r) => r.json()).catch(() => null);
+      const prefs = change((cur?.prefs as Record<string, unknown>) ?? {});
+      const r = await fetch("/api/board-prefs", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ boardId, prefs }),
+      });
+      if (r.ok) load();
+    } catch { /* curation is a nicety — a failed save leaves the board as it was */ }
+  }
+  const arr = (v: unknown): string[] => (Array.isArray(v) ? (v as string[]) : []);
+  const togglePin = (c: LiveChart) => void updatePrefs(c.boardId, (p) => ({
+    ...p,
+    pinnedWidgets: c.pinned ? arr(p.pinnedWidgets).filter((k) => k !== c.key) : [...arr(p.pinnedWidgets), c.key],
+    hiddenWidgets: arr(p.hiddenWidgets).filter((k) => k !== c.key),
+  }));
+  const hideChart = (c: LiveChart) => void updatePrefs(c.boardId, (p) => ({
+    ...p,
+    hiddenWidgets: [...arr(p.hiddenWidgets).filter((k) => k !== c.key), c.key],
+    pinnedWidgets: arr(p.pinnedWidgets).filter((k) => k !== c.key),
+  }));
+  const bringBack = (m: MoreWidget) => void updatePrefs(m.boardId, (p) => ({
+    ...p,
+    hiddenWidgets: arr(p.hiddenWidgets).filter((k) => k !== m.key),
+    // A widget the relevance layer dropped comes back PINNED — the user just
+    // said it matters, and a pin is the only thing that outranks the layer.
+    pinnedWidgets: m.hiddenByUser ? arr(p.pinnedWidgets) : [...arr(p.pinnedWidgets).filter((k) => k !== m.key), m.key],
+  }));
   useEffect(() => { load();
     const h = () => load(); window.addEventListener("anyday-refresh", h);
     return () => window.removeEventListener("anyday-refresh", h);
@@ -1163,10 +1165,26 @@ function Dashboard({ names, empty = false, boards = [] }: { names: string[]; emp
           </div>
         </div>
       )}
-      {/* chart cards */}
+      {/* chart cards — pinned first (the server ordered them); ⭐/✕ curate in place */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(300px,1fr))", gap: 14, alignItems: "start" }}>
-        {d.charts.map((w, i) => <ChartCard key={i} w={w} i={i} />)}
+        {d.charts.map((w, i) => (
+          <ChartCard key={w.key || i} w={w} i={i} pinned={w.pinned} onPin={() => togglePin(w)} onHide={() => hideChart(w)} />
+        ))}
       </div>
+      {/* what did NOT earn a place — hidden by the user, or dropped by the
+          relevance layer as telling no story. One click brings any back. */}
+      {(d.more?.length ?? 0) > 0 && (
+        <div style={{ marginTop: 16, background: C.panel, border: "1px dashed #E0DEF0", borderRadius: 14, padding: "10px 14px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 11.5, color: C.muted, fontWeight: 700 }}>עוד רכיבים ({d.more!.length}):</span>
+          {d.more!.map((m) => (
+            <button key={`${m.boardId}-${m.key}`} onClick={() => bringBack(m)}
+              title={m.hiddenByUser ? "הסתרתם את זה — לחיצה מחזירה ללוח" : "לא נמצא בו סיפור מעניין — לחיצה מצמידה אותו ללוח בכל זאת"}
+              style={{ border: "1px solid #E6E4F0", background: "#FAF9FE", color: C.muted, borderRadius: 99, padding: "4px 11px", fontSize: 11.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+              ＋ {m.label}{m.hiddenByUser ? " (הוסתר)" : ""}
+            </button>
+          ))}
+        </div>
+      )}
       <style>{`@keyframes rise{from{opacity:0;transform:translateY(8px)}}`}</style>
     </div>
   );
@@ -1185,13 +1203,27 @@ function KpiTile({ k, i }: { k: KPI; i: number }) {
     </div>
   );
 }
-function ChartCard({ w, i }: { w: Widget; i: number }) {
+function ChartCard({ w, i, pinned, onPin, onHide }: {
+  w: Widget; i: number;
+  /** Live-board curation (משוב מיטל 1.9): ⭐ pins the card first, ✕ hides it.
+      Saved dashboards pass none of these and render exactly as before. */
+  pinned?: boolean; onPin?: () => void; onHide?: () => void;
+}) {
   const c = pick(i);
+  const act: React.CSSProperties = { border: "none", background: "none", cursor: "pointer", fontSize: 14, lineHeight: 1, padding: "3px 5px", borderRadius: 7, color: "#B4B2C6" };
   return (
-    <div style={{ background: C.panel, border: `1px solid #ECEBF5`, borderRadius: 18, padding: "16px 18px", boxShadow: "0 4px 16px -8px rgba(60,50,120,.12)" }}>
+    <div style={{ background: C.panel, border: `1px solid ${pinned ? C.grape + "55" : "#ECEBF5"}`, borderRadius: 18, padding: "16px 18px", boxShadow: "0 4px 16px -8px rgba(60,50,120,.12)" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
         <span style={{ width: 8, height: 22, borderRadius: 4, background: c.fg }} />
-        <div style={{ fontSize: 14, fontWeight: 800 }}>{w.title}</div>
+        <div style={{ fontSize: 14, fontWeight: 800, flex: 1 }}>{w.title}</div>
+        {onPin && (
+          <button onClick={onPin} title={pinned ? "ביטול ההצמדה" : "חשוב לי — הצמדה לראש הלוח"} aria-label={pinned ? `ביטול הצמדה של ${w.title}` : `הצמדת ${w.title} לראש הלוח`} aria-pressed={pinned} style={{ ...act, color: pinned ? C.amber : "#B4B2C6" }}>
+            {pinned ? "★" : "☆"}
+          </button>
+        )}
+        {onHide && (
+          <button onClick={onHide} title="פחות רלוונטי — הסתרה מהלוח (אפשר להחזיר למטה)" aria-label={`הסתרת ${w.title} מהלוח`} style={act}>✕</button>
+        )}
       </div>
       <ChartBody w={w} c={c} />
       <div style={{ marginTop: 12, fontSize: 10.5, color: "#B4B2C6", borderTop: "1px dashed #EEEDF5", paddingTop: 8 }}>🔎 {w.source}</div>

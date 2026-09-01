@@ -3,6 +3,8 @@ import { cookies } from "next/headers";
 import { requireMonday } from "@/lib/monday-server";
 import { fetchBoards, fetchBoardMeta, parseBoardIds, coverage } from "@/lib/board-fetch";
 import * as BI from "@/lib/board-intelligence";
+import { profileBoard, applyPreferences, selectLiveWidgets, widgetKey } from "@/lib/board-profile";
+import { readBoardPrefs } from "@/lib/board-prefs";
 
 /**
  * Smart dashboard data for one or more boards. Generic (works by column TYPE),
@@ -67,27 +69,48 @@ export async function GET(req: NextRequest) {
         }).slice(0, 4);
 
     let atRisk = 0;
-    const charts: (BI.Widget & { drill?: Record<string, string[]> })[] = [];
+    type LiveChart = BI.Widget & { drill?: Record<string, string[]>; key: string; boardId: string; pinned: boolean };
+    const charts: LiveChart[] = [];
+    /** Everything that did NOT earn a place — hidden, no-signal, overflow — so one click brings it back. */
+    const moreOut: { key: string; boardId: string; label: string; hiddenByUser: boolean }[] = [];
     const attentionItems: { name: string; why: string; board: string }[] = [];
 
     for (const b of biBoards) {
-      const statusCols = b.columns.filter((c) => ["status", "color", "dropdown"].includes(c.type));
-      for (const c of statusCols) {
-        const w = BI.breakdown(b, c.title);
-        if (w) {
-          // drill-down: for each bucket value, the list of item names in it
-          const drill: Record<string, string[]> = {};
-          for (const it of b.items) {
-            const v = it.values.find((x) => x.colId === c.id)?.text || "— ריק —";
-            (drill[v] ||= []).push(it.name);
+      // The board no longer dumps EVERY column: the profile ranks them, the
+      // user's ⭐/✕ (board_preferences) override, and the relevance layer
+      // drops what tells no story (משוב מיטל 1.9 — לוח עמוס). Dropped widgets
+      // ride along in `more`, one click from returning.
+      const prefs = await readBoardPrefs(guard.orgId, b.id);
+      const profile = applyPreferences(profileBoard(b), prefs);
+      const { show, more } = selectLiveWidgets(profile, prefs);
+      const suffix = biBoards.length > 1 ? ` · ${b.name}` : "";
+
+      for (const lw of show) {
+        // attention is rendered by the banner below, not as a chart card
+        if (lw.kind === "attention") continue;
+        let w: BI.Widget | null = null;
+        let drill: Record<string, string[]> | undefined;
+        if (lw.kind === "breakdown" && lw.col) {
+          w = BI.breakdown(b, lw.col);
+          const c = b.columns.find((x) => x.title === lw.col);
+          if (w && c) {
+            drill = {};
+            for (const it of b.items) {
+              const v = it.values.find((x) => x.colId === c.id)?.text || "— ריק —";
+              (drill[v] ||= []).push(it.name);
+            }
           }
-          charts.push({ ...w, title: `${w.title}${biBoards.length > 1 ? ` · ${b.name}` : ""}`, drill });
-        }
+        } else if (lw.kind === "byOwner" && lw.col) w = BI.byOwner(b, lw.col);
+        else if (lw.kind === "numberSummary" && lw.col) w = BI.numberSummary(b, lw.col);
+        else if (lw.kind === "list") w = BI.list(b);
+        if (w) charts.push({ ...w, title: `${w.title}${suffix}`, drill, key: widgetKey(lw), boardId: b.id, pinned: lw.pinned });
       }
-      const owner = BI.byOwner(b);
-      if (owner && (owner.data as { rows: unknown[] }).rows.length > 1) charts.push({ ...owner, title: `${owner.title}${biBoards.length > 1 ? ` · ${b.name}` : ""}` });
-      const num = BI.numberSummary(b);
-      if (num) charts.push(num);
+
+      const hiddenSet = new Set(prefs.hiddenWidgets ?? []);
+      for (const lw of more) {
+        if (lw.kind === "attention") continue;
+        moreOut.push({ key: widgetKey(lw), boardId: b.id, label: `${lw.label}${suffix}`, hiddenByUser: hiddenSet.has(widgetKey(lw)) });
+      }
 
       const items = (BI.attention(b).data as { items: { name: string; why: string }[] }).items;
       items.forEach((it) => attentionItems.push({ ...it, board: b.name }));
@@ -103,6 +126,7 @@ export async function GET(req: NextRequest) {
       tones,
       kpis,
       charts: charts.slice(0, 8),
+      more: moreOut,
       attention: { count: atRisk, items: attentionItems.slice(0, 8) },
       coverage: coverage(biBoards),
       source: biBoards.map((b) => b.name).join(" · "),

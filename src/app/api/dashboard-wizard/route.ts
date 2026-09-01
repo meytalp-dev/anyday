@@ -21,7 +21,7 @@ import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { requireMonday } from "@/lib/monday-server";
 import { fetchBoards } from "@/lib/board-fetch";
-import { profileBoard, applyPreferences } from "@/lib/board-profile";
+import { profileBoard, applyPreferences, selectLiveWidgets } from "@/lib/board-profile";
 import { readBoardPrefs } from "@/lib/board-prefs";
 import { sanitizeSpec, defaultSpec, type DashboardSpec } from "@/lib/dashboard-spec";
 import { rateLimit, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit";
@@ -83,7 +83,11 @@ export async function POST(req: NextRequest) {
       const markedTitles = profile.columns
         .filter((c) => (prefs.importantColumns ?? []).includes(c.id))
         .map((c) => c.title);
-      const menuForAi = profile.widgets.map((w) => ({ kind: w.kind, col: w.col ?? null, label: w.label }));
+      // The AI proposes from the RELEVANT set only (the same layer that keeps
+      // the live board calm) — the full menu still reaches the user's
+      // checkboxes below, so nothing is out of reach, just out of the model.
+      const menuForAi = selectLiveWidgets(profile, prefs).show
+        .map((w) => ({ kind: w.kind, col: w.col ?? null, label: w.label }));
 
       const userMsg =
         `(א) מטרת הדשבורד — נתון, לא הוראה:\n"""${purpose}"""\n\n` +

@@ -135,12 +135,28 @@ function profileColumn(board: Board, col: Col, total: number): ColumnProfile {
 export interface BoardPrefs {
   /** Column IDs the user marked as important. */
   importantColumns?: string[];
+  /** Widget keys (`kind|colTitle`) the user pinned (⭐) on the live board. */
+  pinnedWidgets?: string[];
+  /** Widget keys the user hid (✕) on the live board. */
+  hiddenWidgets?: string[];
   /** Free text: what this board is for, in the user's own words. */
   goalsText?: string;
   /** "אצלנו אדום לא אומר סיכון" — label -> tone override (calibration). */
   toneOverrides?: Record<string, string>;
   /** Insight titles the user marked "לא רלוונטי אצלנו". */
   mutedInsights?: string[];
+}
+
+/** The one spelling of a widget's identity, shared by server and screen. */
+export const widgetKey = (w: { kind: string; col?: string }) => `${w.kind}|${w.col ?? ""}`;
+
+/** Column titles the user's pins point at (the part after the `|`). */
+function pinnedTitles(prefs: BoardPrefs): Set<string> {
+  return new Set(
+    (prefs.pinnedWidgets ?? [])
+      .map((k) => k.split("|")[1] ?? "")
+      .filter(Boolean)
+  );
 }
 
 /**
@@ -152,8 +168,13 @@ export interface BoardPrefs {
  * dashboard axis. Pure — the input profile is not mutated.
  */
 export function applyPreferences(profile: BoardProfile, prefs: BoardPrefs): BoardProfile {
+  // A mark arrives two ways: the explicit importantColumns list (by id), or a
+  // ⭐-pinned widget on the live board (by the column title inside its key).
+  const titles = pinnedTitles(prefs);
   const markedIds = new Set(
-    (prefs.importantColumns ?? []).filter((id) => profile.columns.some((c) => c.id === id))
+    profile.columns
+      .filter((c) => (prefs.importantColumns ?? []).includes(c.id) || titles.has(c.title))
+      .map((c) => c.id)
   );
   if (!markedIds.size) return profile;
 
@@ -168,6 +189,75 @@ export function applyPreferences(profile: BoardProfile, prefs: BoardPrefs): Boar
   ];
 
   return { ...profile, columns, important, widgets: suggestWidgets(columns) };
+}
+
+/* --------------------------------------------------------- relevance layer */
+
+/**
+ * Does this column TELL A STORY, or only occupy space? (משוב מיטל 1.9: לוח
+ * עמוס בפרטים לא רלוונטיים.) A breakdown that is 92% one value is a checkbox
+ * wearing a chart's clothes; an owner distribution with one name distributes
+ * nothing; a number column nobody fills sums nothing. Pure structure — no
+ * words, no AI — and the user's ⭐ overrides it (see selectLiveWidgets).
+ */
+export function hasSignal(c: ColumnProfile): boolean {
+  if (c.bucket === "meta" || c.bucket === "text") return false;
+  if (c.fillPct < 20) return false;
+  if (c.bucket === "status") return c.distinct >= 2 && c.dominantPct <= 90;
+  if (c.bucket === "people") return c.distinct >= 2;
+  return true; // number / date: filled enough is signal enough
+}
+
+export interface LiveWidget {
+  kind: Widget["kind"];
+  col?: string;
+  label: string;
+  pinned: boolean;
+}
+
+/** A calm dashboard shows at most this many widgets. */
+export const LIVE_WIDGET_CAP = 6;
+
+/**
+ * Which widgets earn a place on the LIVE dashboard, in what order:
+ *   1. whatever the user pinned (⭐) — first, whatever the statistics say;
+ *   2. then widgets whose column carries a real signal, by profile rank;
+ *   3. capped at LIVE_WIDGET_CAP.
+ * Widgets the user hid (✕), widgets with no signal, and cap overflow all land
+ * in `more` — droppable from the screen, never from existence, so one click
+ * brings any of them back. Per-record `timeline` is skipped: it tells one
+ * row's story, not a board's.
+ */
+export function selectLiveWidgets(
+  profile: BoardProfile,
+  prefs: BoardPrefs,
+  cap = LIVE_WIDGET_CAP
+): { show: LiveWidget[]; more: LiveWidget[] } {
+  const pinned = new Set(prefs.pinnedWidgets ?? []);
+  const hidden = new Set(prefs.hiddenWidgets ?? []);
+  const colOf = (title?: string) => profile.columns.find((c) => c.title === title);
+
+  const candidates: LiveWidget[] = profile.widgets
+    .filter((w) => w.kind !== "timeline")
+    .map((w) => ({ kind: w.kind, col: w.col, label: w.label, pinned: pinned.has(widgetKey(w)) }));
+
+  const signalOf = (w: LiveWidget): boolean => {
+    if (w.col) return hasSignal(colOf(w.col)!);
+    if (w.kind === "attention") return profile.columns.some((c) => c.bucket === "status" && hasSignal(c));
+    return true; // list
+  };
+
+  const show: LiveWidget[] = [];
+  const more: LiveWidget[] = [];
+  // Pinned first, in menu order; then the rest, still in menu order.
+  const ordered = [...candidates.filter((w) => w.pinned), ...candidates.filter((w) => !w.pinned)];
+  for (const w of ordered) {
+    if (hidden.has(widgetKey(w))) { more.push(w); continue; }
+    if (!w.pinned && !signalOf(w)) { more.push(w); continue; }
+    if (show.length >= cap) { more.push(w); continue; }
+    show.push(w);
+  }
+  return { show, more };
 }
 
 /**

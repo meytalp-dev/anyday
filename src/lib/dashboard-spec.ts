@@ -8,7 +8,7 @@
 // the deterministic fallback used when the AI is unavailable, which keeps the
 // wizard working (and testable) offline.
 
-import type { BoardProfile, ColumnBucket } from "./board-profile";
+import { selectLiveWidgets, type BoardProfile, type ColumnBucket } from "./board-profile";
 
 /** The kinds a saved dashboard can render. Per-record `timeline` is deliberately
  *  absent: it tells one row's story, not a board's, so it lives on the profile
@@ -85,7 +85,12 @@ function defaultTitle(profile: BoardProfile): string {
  * wizard degrades to "the engine's best guess", never to an error screen.
  */
 export function defaultSpec(profile: BoardProfile): DashboardSpec {
-  const raw = profile.widgets.map((w) => ({ kind: w.kind, col: w.col }));
-  const spec = sanitizeSpec({ title: defaultTitle(profile), widgets: raw }, profile);
+  // Through the relevance layer, not the raw menu: a fallback dashboard must
+  // be calm too — no story-less breakdowns, no one-name "distributions".
+  const { show } = selectLiveWidgets(profile, {});
+  const spec = sanitizeSpec(
+    { title: defaultTitle(profile), widgets: show.map((w) => ({ kind: w.kind, col: w.col })) },
+    profile
+  );
   return { ...spec, widgets: spec.widgets.slice(0, 6) };
 }
