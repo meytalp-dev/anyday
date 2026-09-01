@@ -187,6 +187,26 @@ export function columnMentioned(title: string, text: string): boolean {
 }
 
 /**
+ * "You asked for a column that is not on THIS board — but it exists THERE."
+ * (המקרה של מיטל: "סטטוס טיפול" התבקש על לוח שאין בו עמודה כזו.) Given the
+ * purpose text and the OTHER boards' column titles, returns the first board
+ * that carries a mentioned column — so the wizard can say the honest sentence
+ * instead of silently building something else. Null when the purpose names
+ * nothing anywhere: a generic purpose must not produce noise.
+ */
+export function findColumnElsewhere(
+  purpose: string,
+  boards: { id: string; name: string; titles: string[] }[]
+): { boardId: string; boardName: string; column: string } | null {
+  if (!purpose.trim()) return null;
+  for (const b of boards) {
+    const column = b.titles.find((t) => columnMentioned(t, purpose));
+    if (column) return { boardId: b.id, boardName: b.name, column };
+  }
+  return null;
+}
+
+/**
  * Every column the prefs say MATTERS, by title — a mark arrives three ways:
  * an explicit importantColumns id, a ⭐-pinned widget, or the column's own
  * name written into the free-text purpose ("לעקוב אחרי סטטוס טיפול" names a

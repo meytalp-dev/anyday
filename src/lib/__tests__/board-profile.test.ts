@@ -10,7 +10,7 @@
  * כדי שכיול המשקולות לא ישבור אותן.
  */
 import { describe, it, expect } from "vitest";
-import { profileBoard, applyPreferences, selectLiveWidgets, hasSignal, examplePurposes, columnMentioned } from "../board-profile";
+import { profileBoard, applyPreferences, selectLiveWidgets, hasSignal, examplePurposes, columnMentioned, findColumnElsewhere } from "../board-profile";
 import type { Board, Col, Item } from "../board-intelligence";
 
 /* ------------------------------------------------------------ בוני-עזר */
@@ -302,6 +302,24 @@ describe("columnMentioned — התאמה גמישה בין מה שנכתב לש�
   it("ההתאמה הגמישה חיה גם בדירוג: 'הסטטוס' מרים את 'סטטוס קשר' לראש הלוח", () => {
     const p = applyPreferences(profileBoard(donorsBoard()), { goalsText: "מה הסטטוס אצל כולם" });
     expect(p.columns[0].title).toBe("סטטוס קשר");
+  });
+});
+
+describe("findColumnElsewhere — 'ביקשת עמודה שלא כאן, אבל היא קיימת שם' (המקרה של מיטל)", () => {
+  // המקרה האמיתי: "סטטוס טיפול" התבקש על "כלל הבוגרים" (שאין בו עמודה כזו),
+  // בעוד "סטטוס טיפול (מילויי צוות)" קיימת בלוח אשקלון.
+  const others = [
+    { id: "1", name: "כלל הבוגרים", titles: ["בית ספר", "מגמה", "עיר"] },
+    { id: "2", name: "בוגרים אורט אדיבי אשקלון", titles: ["סטטוס טיפול (מילויי צוות)", "מגמה"] },
+  ];
+
+  it("מוצא את הלוח שבו העמודה המבוקשת באמת קיימת", () => {
+    const hit = findColumnElsewhere("סטטוס טיפול", others);
+    expect(hit).toEqual({ boardId: "2", boardName: "בוגרים אורט אדיבי אשקלון", column: "סטטוס טיפול (מילויי צוות)" });
+  });
+
+  it("מטרה גנרית שלא נוקבת בעמודה — אין הצעה, אין רעש", () => {
+    expect(findColumnElsewhere("תמונת מצב שבועית להנהלה", others)).toBeNull();
   });
 });
 

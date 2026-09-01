@@ -972,6 +972,9 @@ function DashboardWizard({ boards, onClose, onCreated }: {
   const [picked, setPicked] = useState<SpecW[]>([]);
   const [menu, setMenu] = useState<SpecW[]>([]);
   const [usedAi, setUsedAi] = useState(false);
+  /* "ביקשת עמודה שלא בלוח הזה — היא קיימת בלוח אחר": ההודעה הכנה מהשרת,
+     עם כפתור שמעביר ללוח הנכון (המקרה של מיטל עם "סטטוס טיפול"). */
+  const [note, setNote] = useState<{ text: string; boardId: string; boardName: string } | null>(null);
   /* Example purposes, built from the SELECTED board's own columns (משוב מיטל:
      "צריך לתת דוגמאות לדברים שאפשר לבנות") — an example naming the user's real
      column teaches what a purpose looks like better than generic text. */
@@ -996,6 +999,7 @@ function DashboardWizard({ boards, onClose, onCreated }: {
       const d = await r.json().catch(() => ({}));
       if (!r.ok) { setErr(d.error || "ההצעה נכשלה"); return; }
       setTitle(d.spec.title); setPicked(d.spec.widgets); setMenu(d.menu || d.spec.widgets); setUsedAi(Boolean(d.usedAi));
+      setNote(d.note ?? null);
       setStep(2);
     } catch { setErr("לא הצלחנו לפנות לשרת"); }
     finally { setBusy(false); }
@@ -1079,6 +1083,15 @@ function DashboardWizard({ boards, onClose, onCreated }: {
 
         {step === 2 && (
           <>
+            {note && (
+              <div style={{ background: C.amberL, border: `1px solid ${C.amber}55`, borderRadius: 12, padding: "10px 14px", marginBottom: 12 }}>
+                <div style={{ fontSize: 12.5, color: C.ink, lineHeight: 1.6, marginBottom: 7 }}>💡 {note.text}</div>
+                <button
+                  onClick={() => { setBoardId(note.boardId); setNote(null); setStep(1); }}
+                  style={{ border: "none", background: C.amber, color: "#fff", borderRadius: 9, padding: "6px 13px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
+                >{`לבנות על ״${note.boardName}״ במקום ←`}</button>
+              </div>
+            )}
             <p style={{ fontSize: 12.5, color: C.muted, margin: "0 0 14px", lineHeight: 1.7 }}>
               {usedAi ? "ההצעה הורכבה לפי המטרה שכתבתם — רק מרכיבים שהלוח באמת תומך בהם." : "הצעה אוטומטית מהמנוע (ה-AI לא היה זמין) — רק מרכיבים שהלוח באמת תומך בהם."}
               {" "}סמנו והורידו כרצונכם; הדשבורד ייווצר רק בלחיצה על שמירה.

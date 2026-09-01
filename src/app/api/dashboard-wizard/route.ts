@@ -19,9 +19,9 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
-import { requireMonday } from "@/lib/monday-server";
+import { requireMonday, mondayQuery } from "@/lib/monday-server";
 import { fetchBoards } from "@/lib/board-fetch";
-import { profileBoard, applyPreferences, selectLiveWidgets } from "@/lib/board-profile";
+import { profileBoard, applyPreferences, selectLiveWidgets, columnMentioned, findColumnElsewhere } from "@/lib/board-profile";
 import { readBoardPrefs } from "@/lib/board-prefs";
 import { sanitizeSpec, defaultSpec, ensureMentionedColumns, type DashboardSpec } from "@/lib/dashboard-spec";
 import { rateLimit, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit";
@@ -130,5 +130,31 @@ export async function POST(req: NextRequest) {
     profile
   ).widgets;
 
-  return NextResponse.json({ spec, menu, usedAi, boardName: profile.boardName });
+  // The honest sentence (המקרה של מיטל: "סטטוס טיפול" התבקש על לוח שאין בו
+  // עמודה כזו): when the purpose names no column ON THIS BOARD, check the
+  // account's other boards — columns only, one cheap query, no items — and if
+  // the column lives elsewhere, SAY SO instead of silently building something
+  // else. A generic purpose that names nothing produces no noise.
+  let note: { text: string; boardId: string; boardName: string } | null = null;
+  if (purpose && !profile.columns.some((c) => columnMentioned(c.title, purpose))) {
+    try {
+      const list = await mondayQuery(
+        `query { boards(limit: 20, order_by: used_at, state: active) { id name columns { title } } }`,
+        guard.token
+      );
+      const others = ((list?.boards ?? []) as { id: string; name: string; columns?: { title: string }[] }[])
+        .filter((b) => String(b.id) !== boardId)
+        .map((b) => ({ id: String(b.id), name: b.name, titles: (b.columns ?? []).map((c) => c.title) }));
+      const hit = findColumnElsewhere(purpose, others);
+      if (hit) {
+        note = {
+          text: `בלוח "${profile.boardName}" אין עמודה שמתאימה למה שכתבתם — אבל בלוח "${hit.boardName}" יש עמודת "${hit.column}". ההצעה למטה נבנתה ממה שכן קיים כאן.`,
+          boardId: hit.boardId,
+          boardName: hit.boardName,
+        };
+      }
+    } catch { /* the note is a nicety — its absence must not fail the proposal */ }
+  }
+
+  return NextResponse.json({ spec, menu, usedAi, boardName: profile.boardName, note });
 }
