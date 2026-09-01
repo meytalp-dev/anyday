@@ -224,7 +224,7 @@ function AppShell() {
           <div style={{ display: "grid", gridTemplateColumns: narrow ? "1fr" : "1fr 250px", maxWidth: 1260, margin: "0 auto", gap: 18, padding: narrow ? "14px 14px 90px" : "20px 20px 90px" }}>
             {narrow && <BoardRail boards={boards} active={active} setActive={setActiveBoards} collapsible />}
             <main style={{ minWidth: 0 }}>
-              {tab === "dash" && <Dashboard key={active.join()} names={activeNames} empty={activeAllEmpty} />}
+              {tab === "dash" && <Dashboard key={active.join()} names={activeNames} empty={activeAllEmpty} boards={activeBoards} />}
               {tab === "people" && <People />}
               {tab === "insights" && (
                 <>
@@ -732,8 +732,127 @@ function DotProfile({ d, entity, onClose }: { d: Dot; entity: string; onClose: (
   );
 }
 
+/* ===== "מה חשוב לך בלוח הזה" (W2-1) =====
+   The user's half of the board profile. The engine ranks columns by structure;
+   this card records what the PERSON says matters, and applyPreferences on the
+   server lets the person win. Saved per org+board in board_preferences. */
+
+interface ProfileCol { id: string; title: string; bucket: string; score: number }
+
+function PrefsCard({ boardId, boardName }: { boardId: string; boardName: string }) {
+  const [open, setOpen] = useState(false);
+  const [editable, setEditable] = useState(true);
+  const [marked, setMarked] = useState<string[]>([]);
+  const [goals, setGoals] = useState("");
+  const [cols, setCols] = useState<ProfileCol[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
+
+  /* The saved prefs are cheap — read them right away so the closed row can say
+     whether this board was ever configured. The PROFILE (a full board read) is
+     fetched only when the card is opened. */
+  useEffect(() => {
+    let alive = true;
+    fetch(`/api/board-prefs?board=${boardId}`, { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => {
+        if (!alive || d.error) return;
+        setMarked(d.prefs?.importantColumns ?? []);
+        setGoals(d.prefs?.goalsText ?? "");
+        setEditable(d.editable !== false);
+        setLoaded(true);
+      })
+      .catch(() => { /* the card is a nicety — its absence must not break the dashboard */ });
+    return () => { alive = false; };
+  }, [boardId]);
+
+  function toggleOpen() {
+    const next = !open;
+    setOpen(next);
+    if (next && cols === null) {
+      fetch(`/api/board-profile?boards=${boardId}`, { cache: "no-store" })
+        .then((r) => r.json())
+        .then((d) => {
+          const p = d.profiles?.[0];
+          if (p) setCols((p.columns as ProfileCol[]).filter((c) => c.bucket !== "meta"));
+          else setMsg(d.error || "לא הצלחנו לקרוא את מבנה הלוח");
+        })
+        .catch(() => setMsg("לא הצלחנו לפנות לשרת"));
+    }
+  }
+
+  async function save() {
+    setBusy(true); setMsg(null);
+    try {
+      const r = await fetch("/api/board-prefs", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ boardId, prefs: { importantColumns: marked, goalsText: goals } }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) setMsg(d.error || "השמירה נכשלה");
+      else { setMsg("נשמר ✓"); setOpen(false); }
+    } catch {
+      setMsg("לא הצלחנו לפנות לשרת");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!loaded) return null; // personal mode / not signed in — the card simply is not there
+  const configured = marked.length > 0 || goals.trim().length > 0;
+
+  return (
+    <div style={{ background: C.panel, border: "1px solid #ECEBF5", borderInlineStart: `4px solid ${configured ? C.teal : C.amber}`, borderRadius: 16, marginBottom: 16, animation: "rise .4s both" }}>
+      <button onClick={toggleOpen} aria-expanded={open} style={{ width: "100%", border: "none", background: "none", fontFamily: "inherit", cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: "12px 18px", textAlign: "right" }}>
+        <span style={{ fontSize: 16 }}>🎯</span>
+        <span style={{ fontSize: 13.5, fontWeight: 800, color: C.ink }}>מה חשוב לך ב״{boardName}״?</span>
+        <span style={{ fontSize: 12, color: C.muted, flex: 1 }}>
+          {configured ? `${marked.length ? `${marked.length} עמודות סומנו` : ""}${marked.length && goals.trim() ? " · " : ""}${goals.trim() ? "יש תיאור מטרה" : ""}` : "עדיין לא הגדרתם — הלוח מנחש לבד"}
+        </span>
+        <span aria-hidden style={{ fontSize: 11, color: C.muted }}>{open ? "▴" : "▾"}</span>
+      </button>
+      {open && (
+        <div style={{ padding: "0 18px 16px" }}>
+          <div style={{ fontSize: 12, color: C.muted, marginBottom: 8, lineHeight: 1.6 }}>
+            סמנו את העמודות שחשובות לכם — הן יובילו את הלוח ואת הדשבורדים שייבנו, לפני מה שהמערכת מזהה לבד.
+          </div>
+          {cols === null && !msg && <Spinner label="קוראים את מבנה הלוח..." />}
+          {cols && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginBottom: 12 }}>
+              {cols.map((c) => {
+                const on = marked.includes(c.id);
+                return (
+                  <button
+                    key={c.id} onClick={() => setMarked(on ? marked.filter((x) => x !== c.id) : [...marked, c.id])}
+                    disabled={!editable} aria-pressed={on}
+                    style={{ border: `1.5px solid ${on ? C.grape : "#E6E4F0"}`, background: on ? C.grapeL : "#fff", color: on ? C.grape : C.muted, borderRadius: 99, padding: "5px 12px", fontSize: 12, fontWeight: on ? 700 : 500, cursor: editable ? "pointer" : "default", fontFamily: "inherit" }}
+                  >{c.title}</button>
+                );
+              })}
+            </div>
+          )}
+          <textarea
+            value={goals} onChange={(e) => setGoals(e.target.value)} disabled={!editable}
+            placeholder="במילים שלכם: בשביל מה הלוח הזה? מה אתם רוצים לראות בו כל בוקר?"
+            maxLength={500} rows={2}
+            style={{ width: "100%", border: "1px solid #E6E4F0", borderRadius: 11, padding: "9px 12px", fontSize: 12.5, fontFamily: "inherit", resize: "vertical", outline: "none", marginBottom: 10, boxSizing: "border-box" }}
+          />
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <button onClick={() => void save()} disabled={busy || !editable} style={{ border: "none", background: C.grape, color: "#fff", borderRadius: 10, padding: "8px 18px", fontSize: 12.5, fontWeight: 700, cursor: busy ? "wait" : "pointer", fontFamily: "inherit" }}>
+              {busy ? "שומרים…" : "שמירה"}
+            </button>
+            {!editable && <span style={{ fontSize: 11.5, color: C.muted }}>לצופה אין הרשאת עריכה</span>}
+            {msg && <span style={{ fontSize: 11.5, color: msg.includes("✓") ? "#0B8F76" : C.coral }}>{msg}</span>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ===== dashboard (charts fallback) ===== */
-function Dashboard({ names, empty = false }: { names: string[]; empty?: boolean }) {
+function Dashboard({ names, empty = false, boards = [] }: { names: string[]; empty?: boolean; boards?: BoardOpt[] }) {
   const [d, setD] = useState<{ kpis: KPI[]; charts: Widget[]; attention: { count: number; items: { name: string; why: string; board: string }[] }; coverage?: Cov; source: string } | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const load = () => { setD(null); setErr(null);
@@ -751,6 +870,8 @@ function Dashboard({ names, empty = false }: { names: string[]; empty?: boolean 
         <h1 style={{ fontSize: 23, fontWeight: 800, margin: "0 0 2px" }}>הלוח של {names.join(" · ")}</h1>
         <p style={{ fontSize: 13, color: C.muted, margin: 0 }}>מתעדכן חי מ-Monday{d.coverage?.truncated ? ` · ${d.coverage.note}` : ""}</p>
       </div>
+      {/* "מה חשוב לך" — one slim row per board on the roof (W2-1). */}
+      {boards.map((b) => <PrefsCard key={b.id} boardId={b.id} boardName={b.name} />)}
       {/* A board with no rows is not a broken board - say it plainly instead of
           showing a grid of zeros with no explanation. */}
       {empty && (

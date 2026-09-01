@@ -126,6 +126,50 @@ function profileColumn(board: Board, col: Col, total: number): ColumnProfile {
   return { id: col.id, title: col.title, type: col.type, bucket, fillPct, distinct, dominantPct, score };
 }
 
+/* -------------------------------------------------------------- preferences */
+
+/**
+ * What the user told us matters (board_preferences.prefs). Everything optional:
+ * an org that never opened the "מה חשוב לך" panel gets pure statistics.
+ */
+export interface BoardPrefs {
+  /** Column IDs the user marked as important. */
+  importantColumns?: string[];
+  /** Free text: what this board is for, in the user's own words. */
+  goalsText?: string;
+  /** "אצלנו אדום לא אומר סיכון" — label -> tone override (calibration). */
+  toneOverrides?: Record<string, string>;
+  /** Insight titles the user marked "לא רלוונטי אצלנו". */
+  mutedInsights?: string[];
+}
+
+/**
+ * Merge the user's preferences into a profile (W2-3). The rule is simple and
+ * absolute: a column the user MARKED outranks every column they did not,
+ * whatever the statistics say — "מה שחשוב למשתמש גובר על מה שמעניין
+ * סטטיסטית". Marks on unknown columns are ignored (nothing is invented), and
+ * meta columns stay dead even when marked: Monday's bookkeeping is not a
+ * dashboard axis. Pure — the input profile is not mutated.
+ */
+export function applyPreferences(profile: BoardProfile, prefs: BoardPrefs): BoardProfile {
+  const markedIds = new Set(
+    (prefs.importantColumns ?? []).filter((id) => profile.columns.some((c) => c.id === id))
+  );
+  if (!markedIds.size) return profile;
+
+  const isMarked = (c: ColumnProfile) => markedIds.has(c.id) && c.bucket !== "meta";
+  const marked = profile.columns.filter(isMarked);
+  const rest = profile.columns.filter((c) => !isMarked(c));
+  const columns = [...marked, ...rest];
+
+  const important = [
+    ...marked,
+    ...profile.important.filter((c) => !markedIds.has(c.id)),
+  ];
+
+  return { ...profile, columns, important, widgets: suggestWidgets(columns) };
+}
+
 /**
  * The widget menu, in the order the profile ranks the columns that feed it.
  * Every entry names its column — the wizard's rule "a widget with no matching

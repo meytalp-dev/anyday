@@ -10,7 +10,7 @@
  * כדי שכיול המשקולות לא ישבור אותן.
  */
 import { describe, it, expect } from "vitest";
-import { profileBoard } from "../board-profile";
+import { profileBoard, applyPreferences } from "../board-profile";
 import type { Board, Col, Item } from "../board-intelligence";
 
 /* ------------------------------------------------------------ בוני-עזר */
@@ -147,6 +147,45 @@ describe("profileBoard — הצעת רכיבים", () => {
     const items = [item("ר1", { s: "א" }, cols)];
     const p = profileBoard({ id: "b", name: "לוח", columns: cols, items });
     expect(p.widgets.some((w) => w.kind === "numberSummary")).toBe(false);
+  });
+});
+
+describe("applyPreferences — 'מה חשוב לך' גובר על הסטטיסטיקה (W2-3)", () => {
+  it("עמודה מסומנת, גם חצי-ריקה, מדורגת מעל כל עמודה לא-מסומנת ונכנסת ל-important", () => {
+    const p = applyPreferences(profileBoard(donorsBoard()), { importantColumns: ["phone"] });
+    expect(p.columns[0].id).toBe("phone");
+    expect(p.important.map((c) => c.id)).toContain("phone");
+  });
+
+  it("מזהה עמודה שלא קיים בלוח — מתעלמים, לא ממציאים", () => {
+    const base = profileBoard(donorsBoard());
+    const p = applyPreferences(base, { importantColumns: ["לא-קיימת"] });
+    expect(p.columns.map((c) => c.id).sort()).toEqual(base.columns.map((c) => c.id).sort());
+    expect(p.important.map((c) => c.id)).not.toContain("לא-קיימת");
+  });
+
+  it("עמודת meta מסומנת נשארת מתה — ציון 0 ולא ב-important", () => {
+    const p = applyPreferences(profileBoard(donorsBoard()), { importantColumns: ["created"] });
+    const created = p.columns.find((c) => c.id === "created")!;
+    expect(created.score).toBe(0);
+    expect(p.important.map((c) => c.id)).not.toContain("created");
+  });
+
+  it("בלי העדפות — הפרופיל חוזר זהה", () => {
+    const base = profileBoard(donorsBoard());
+    expect(applyPreferences(base, {})).toEqual(base);
+  });
+
+  it("הרכיבים עוקבים אחרי הדירוג החדש: תאריך מסומן ⇒ ציר-הזמן שלו ראשון", () => {
+    const p = applyPreferences(profileBoard(donorsBoard()), { importantColumns: ["date"] });
+    expect(p.widgets[0]).toMatchObject({ kind: "timeline", col: "תאריך תרומה אחרונה" });
+  });
+
+  it("הפרופיל המקורי לא משתנה (אין מוטציה)", () => {
+    const base = profileBoard(donorsBoard());
+    const before = JSON.parse(JSON.stringify(base));
+    applyPreferences(base, { importantColumns: ["phone"] });
+    expect(base).toEqual(before);
   });
 });
 
