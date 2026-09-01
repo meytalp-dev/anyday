@@ -141,6 +141,9 @@ function AppShell() {
   const fabChat = useChat();
   /* מעל early-returns של השער — hook לא נקרא בתנאי לעולם. */
   const narrow = useIsNarrow();
+  /* מיתוג הארגון (W1): לוגו+שם על הגג, ופאנל עריכה לאדמין ב-aside. נטען
+     פעם אחת; היעדרו (מצב personal, או v6 שטרם רצה) פשוט משאיר את הגג גנרי. */
+  const branding = useBranding();
 
   useEffect(() => {
     fetch("/api/boards", { cache: "no-store" })
@@ -213,7 +216,7 @@ function AppShell() {
   const activeAllEmpty = activeBoards.length > 0 && activeBoards.every((b) => b.items === 0);
 
   return (
-    <ModeShell mode={mode} onModeChange={goMode} tabs={TABS[mode]} tab={tab} onTabChange={setTab} aside={<ShellAside onDisconnected={handleDisconnected} />}>
+    <ModeShell mode={mode} onModeChange={goMode} tabs={TABS[mode]} tab={tab} onTabChange={setTab} branding={branding.b} aside={<ShellAside onDisconnected={handleDisconnected} branding={branding.b} onBrandingChanged={branding.refresh} />}>
       {mode === "manage" ? (
         <>
           {/* מסך צר = טור אחד, והסרגל הופך לכפתור מעל התוכן (B-6): הדיגסט
@@ -249,7 +252,11 @@ function AppShell() {
    Two things /workspace had and the roof did not: WHICH Monday account you are
    looking at, and a way out of it. The home page promises "אפשר לנתק בלחיצה",
    so the roof has to keep that promise before the old screen can close. */
-function ShellAside({ onDisconnected }: { onDisconnected: () => void }) {
+function ShellAside({ onDisconnected, branding, onBrandingChanged }: {
+  onDisconnected: () => void;
+  branding: Branding;
+  onBrandingChanged: () => void;
+}) {
   const synced = useSyncTime();
   const me = useUser();
   const greetName = me?.name || me?.email?.split("@")[0] || null;
@@ -306,11 +313,121 @@ function ShellAside({ onDisconnected }: { onDisconnected: () => void }) {
           style={{ border: "1px solid #E6E4F0", background: "#fff", color: C.muted, borderRadius: 9, padding: "5px 12px", fontSize: 11.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}
         >{"נתק"}</button>
       )}
+      {/* Branding is an org-level setting, so the button exists only for the
+          role that may change it — everyone else just sees the logo itself. */}
+      {branding.role === "admin" && <BrandingControl branding={branding} onChanged={onBrandingChanged} />}
       {/* The name comes from the signed-in user. It used to be a hardcoded
           "שלום, לירון", which greeted every organization by one developer's
           name. Falls back to a bare greeting rather than guessing. */}
       <div style={{ fontSize: 13, fontWeight: 600, color: C.muted, borderInlineStart: "1px solid #ECEBF5", paddingInlineStart: 12 }}>{greetName ? `שלום, ${greetName}` : "שלום"}</div>
     </>
+  );
+}
+
+/* ===== org branding (W1): logo + brand colour, admin-only ===== */
+
+interface Branding { orgName: string | null; logoUrl: string | null; brandColor: string | null; role: string | null }
+const NO_BRANDING: Branding = { orgName: null, logoUrl: null, brandColor: null, role: null };
+
+/** The org's branding, from /api/org/branding. Its absence never breaks the roof. */
+function useBranding(): { b: Branding; refresh: () => void } {
+  const [b, setB] = useState<Branding>(NO_BRANDING);
+  const refresh = () => {
+    fetch("/api/org/branding", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d && !d.error) setB({ orgName: d.orgName ?? null, logoUrl: d.logoUrl ?? null, brandColor: d.brandColor ?? null, role: d.role ?? null });
+      })
+      .catch(() => { /* branding is a nicety — its absence must not break the shell */ });
+  };
+  useEffect(refresh, []);
+  return { b, refresh };
+}
+
+/**
+ * A small "מיתוג" button that opens an inline panel: upload a logo, pick a
+ * brand colour, remove. Everything posts to /api/org/branding, which is the
+ * actual wall (admin check + validation); this is just hands.
+ */
+function BrandingControl({ branding, onChanged }: { branding: Branding; onChanged: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  async function post(form: FormData) {
+    setBusy(true); setErr(null);
+    try {
+      const r = await fetch("/api/org/branding", { method: "POST", body: form });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) setErr(d.error || "השמירה נכשלה");
+      else onChanged();
+    } catch {
+      setErr("לא הצלחנו לפנות לשרת");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function uploadLogo(f: File) {
+    const form = new FormData();
+    form.set("logo", f);
+    await post(form);
+  }
+
+  async function saveColor(hex: string) {
+    const form = new FormData();
+    form.set("brandColor", hex);
+    await post(form);
+  }
+
+  async function removeLogo() {
+    setBusy(true); setErr(null);
+    try {
+      const r = await fetch("/api/org/branding", { method: "DELETE" });
+      if (!r.ok) setErr("ההסרה נכשלה");
+      else onChanged();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const btn: React.CSSProperties = { border: "1px solid #E6E4F0", background: "#fff", color: C.muted, borderRadius: 9, padding: "5px 11px", fontSize: 11.5, fontWeight: 600, cursor: busy ? "wait" : "pointer", fontFamily: "inherit" };
+
+  return (
+    <div style={{ position: "relative" }}>
+      <button onClick={() => setOpen(!open)} title="לוגו וצבע של הארגון — מופיעים בלוח ובמייל השבועי" style={btn} aria-expanded={open}>
+        מיתוג
+      </button>
+      {open && (
+        <div style={{ position: "absolute", top: "calc(100% + 8px)", insetInlineEnd: 0, zIndex: 30, background: "#fff", border: "1px solid #E6E4F0", borderRadius: 14, boxShadow: "0 8px 28px rgba(27,24,48,.12)", padding: 14, width: 230 }}>
+          <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 8 }}>מיתוג הארגון</div>
+          <input
+            ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" hidden
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadLogo(f); e.target.value = ""; }}
+          />
+          <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+            <button onClick={() => fileRef.current?.click()} disabled={busy} style={{ ...btn, textAlign: "right" }}>
+              {branding.logoUrl ? "החלפת הלוגו…" : "העלאת לוגו…"}
+            </button>
+            {branding.logoUrl && (
+              <button onClick={() => void removeLogo()} disabled={busy} style={{ ...btn, textAlign: "right", color: C.coral }}>הסרת הלוגו</button>
+            )}
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11.5, color: C.muted, cursor: "pointer" }}>
+              <input
+                type="color" value={branding.brandColor || "#5B2BD9"} disabled={busy}
+                onChange={(e) => void saveColor(e.target.value)}
+                style={{ width: 30, height: 24, border: "1px solid #E6E4F0", borderRadius: 6, padding: 0, background: "none", cursor: "pointer" }}
+                aria-label="צבע המותג"
+              />
+              צבע המותג במייל השבועי
+            </label>
+          </div>
+          <div style={{ fontSize: 10.5, color: "#A9A7BE", marginTop: 8, lineHeight: 1.5 }}>PNG / JPG / WebP עד 512KB. הלוגו מופיע כאן ובמייל הדיגסט.</div>
+          {err && <div style={{ fontSize: 11, color: C.coral, marginTop: 6 }}>{err}</div>}
+        </div>
+      )}
+    </div>
   );
 }
 

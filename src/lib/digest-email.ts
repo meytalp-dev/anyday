@@ -50,12 +50,25 @@ export interface DigestBoard {
 
 export interface DigestCoverage { loaded: number; total: number; truncated: boolean; note: string }
 
+/**
+ * Per-org branding (W1). All optional: without it the email is exactly what it
+ * always was. Values arrive from the org row, but they are still treated as
+ * untrusted text — the name is escaped, the colour must be a hex literal and
+ * the logo must be an https URL, or they are silently ignored.
+ */
+export interface DigestBranding {
+  orgName?: string | null;
+  logoUrl?: string | null;
+  brandColor?: string | null;
+}
+
 export interface DigestInput {
   boards: DigestBoard[];
   coverage: DigestCoverage;
   generatedAt: Date;
   /** Where the numbers came from, for the footer. */
   sourceLabel: string;
+  branding?: DigestBranding;
 }
 
 export interface RenderedDigest { subject: string; html: string; text: string }
@@ -409,10 +422,24 @@ function boardBlock(b: DigestBoard): string {
 
 /* ------------------------------------------------------------------ email */
 
+/** The brand colour is used inside a style attribute — a hex literal or nothing. */
+const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
+/** The logo becomes an img src — an https URL or nothing. */
+const HTTPS_URL = /^https:\/\/\S+$/;
+
 export function renderDigest(input: DigestInput): RenderedDigest {
   const subject = digestSubject(input);
   const date = hebrewDate(input.generatedAt);
   const warn = paint("progress");
+
+  const branding = input.branding ?? {};
+  const headerBg = HEX_COLOR.test(branding.brandColor ?? "") ? branding.brandColor! : "#5B2BD9";
+  const orgName = (branding.orgName ?? "").trim();
+  const logoUrl = HTTPS_URL.test(branding.logoUrl ?? "") ? branding.logoUrl! : null;
+  const headerTitle = orgName || "AnyDay";
+  const logoTag = logoUrl
+    ? `<img src="${esc(logoUrl)}" alt="${esc(headerTitle)}" height="36" style="height:36px;max-width:180px;border:0;display:block;margin:0 0 8px;">`
+    : "";
 
   const globalCoverage = input.coverage.truncated
     ? `<tr><td dir="rtl" align="right" style="padding:14px 24px 0;">
@@ -434,10 +461,11 @@ export function renderDigest(input: DigestInput): RenderedDigest {
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" dir="rtl" style="background:#F6F5FB;padding:24px 10px;">
  <tr><td align="center">
   <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" dir="rtl" style="width:100%;max-width:600px;background:#FFFFFF;border:1px solid ${LINE};border-radius:14px;">
-   <tr><td dir="rtl" align="right" style="padding:20px 24px;background:#5B2BD9;border-radius:14px 14px 0 0;">
-     <div style="font:700 18px/1.3 ${FONT};color:#FFFFFF;">AnyDay</div>
+   <tr><td dir="rtl" align="right" style="padding:20px 24px;background:${headerBg};border-radius:14px 14px 0 0;">
+     ${logoTag}
+     <div style="font:700 18px/1.3 ${FONT};color:#FFFFFF;">${esc(headerTitle)}</div>
      <div style="font:400 14px/1.6 ${FONT};color:#DCD2FA;margin-top:4px;">${esc(subject)}</div>
-     <div style="font:400 12px/1.6 ${FONT};color:#C4B5F7;margin-top:2px;">${esc(date)}</div>
+     <div style="font:400 12px/1.6 ${FONT};color:#C4B5F7;margin-top:2px;">${esc(date)}${orgName ? ` · AnyDay` : ""}</div>
    </td></tr>
    ${globalCoverage}
    ${body}

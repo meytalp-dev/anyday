@@ -147,6 +147,40 @@ export async function getMondayToken(orgId: string): Promise<string | null> {
   }
 }
 
+/* ---------------------------------------------------------------- branding */
+
+export interface OrgBranding {
+  orgName: string | null;
+  logoUrl: string | null;
+  brandColor: string | null;
+}
+
+/**
+ * The org's branding (W1): name + logo + brand colour, for the dashboard
+ * header and the digest email.
+ *
+ * Deliberately failure-tolerant: the columns arrive with supabase-schema-v6,
+ * and a deployment whose operator has not run v6 yet must degrade to the
+ * unbranded product — never break the digest or the dashboard over a logo.
+ */
+export async function getOrgBranding(orgId: string): Promise<OrgBranding> {
+  const none: OrgBranding = { orgName: null, logoUrl: null, brandColor: null };
+  if (!orgId || orgId === "personal") return none;
+  const service = createServiceClient();
+  if (!service) return none;
+  const { data, error } = await service
+    .from("organizations")
+    .select("name, logo_url, brand_color")
+    .eq("id", orgId)
+    .single();
+  if (error || !data) return none;
+  return {
+    orgName: (data.name as string) ?? null,
+    logoUrl: (data.logo_url as string) ?? null,
+    brandColor: (data.brand_color as string) ?? null,
+  };
+}
+
 /* ------------------------------------------------------------------ digest */
 
 /** One organization a scheduled run should email, with everything it needs. */

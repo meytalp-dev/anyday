@@ -28,8 +28,14 @@ const MODE_LABEL: Record<Mode, string> = { manage: "ניהול", act: "פעול�
 const LINE = "#ECEBF5";
 const MUTED = "#7C7A93";
 
+/** Per-org branding for the roof (W1). Absent = the generic AnyDay brand block. */
+export interface ShellBranding {
+  orgName?: string | null;
+  logoUrl?: string | null;
+}
+
 export function ModeShell({
-  mode, onModeChange, tabs, tab, onTabChange, aside, children,
+  mode, onModeChange, tabs, tab, onTabChange, aside, branding, children,
 }: {
   mode: Mode;
   onModeChange: (m: Mode) => void;
@@ -39,9 +45,13 @@ export function ModeShell({
   onTabChange: (id: string) => void;
   /** Optional right-hand slot in the top bar (sync state, user name…). */
   aside?: React.ReactNode;
+  /** The org's own logo + name; the page fetches it, this only paints it. */
+  branding?: ShellBranding;
   children?: React.ReactNode;
 }) {
   const accent = MODE_COLOR[mode];
+  const orgName = branding?.orgName?.trim() || null;
+  const logoUrl = branding?.logoUrl || null;
 
   return (
     <div dir="rtl" style={{ minHeight: "100vh", background: "#F4F3FB", fontFamily: "Rubik, Assistant, Heebo, system-ui, sans-serif", color: "#1B1830" }}>
@@ -49,9 +59,24 @@ export function ModeShell({
       {/* overflowX: הכותרת לא רשאית לעולם לגרור גלילה אופקית של העמוד כולו —
           במסך צר היא נגללת בתוך עצמה, כמו שורת הלשוניות שמתחתיה. */}
       <header style={{ height: 58, background: "#FFFFFF", borderBottom: `1px solid ${LINE}`, display: "flex", alignItems: "center", gap: 16, padding: "0 22px", position: "sticky", top: 0, zIndex: 20, overflowX: "auto" }}>
+        {/* With a logo, the roof belongs to the ORGANIZATION: its mark and its
+            name lead, and AnyDay steps back to a small suffix. Without one,
+            the generic brand block is exactly what it always was. */}
         <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-          <div style={{ width: 32, height: 32, borderRadius: 10, background: `linear-gradient(135deg,${MODE_COLOR.manage},${MODE_COLOR.act})`, color: "#fff", display: "grid", placeItems: "center", fontWeight: 800, fontSize: 16 }}>A</div>
-          <div style={{ fontWeight: 800, fontSize: 18 }}>Any<span style={{ color: accent }}>Day</span></div>
+          {logoUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element -- the logo is a runtime user upload from Supabase storage, not a build-time asset
+            <img src={logoUrl} alt={orgName || "לוגו הארגון"} style={{ height: 32, maxWidth: 120, objectFit: "contain", borderRadius: 8 }} />
+          ) : (
+            <div style={{ width: 32, height: 32, borderRadius: 10, background: `linear-gradient(135deg,${MODE_COLOR.manage},${MODE_COLOR.act})`, color: "#fff", display: "grid", placeItems: "center", fontWeight: 800, fontSize: 16 }}>A</div>
+          )}
+          {orgName ? (
+            <div style={{ display: "flex", alignItems: "baseline", gap: 7, minWidth: 0 }}>
+              <div style={{ fontWeight: 800, fontSize: 17, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 190 }}>{orgName}</div>
+              <div style={{ fontWeight: 700, fontSize: 11.5, color: MUTED, whiteSpace: "nowrap" }}>Any<span style={{ color: accent }}>Day</span></div>
+            </div>
+          ) : (
+            <div style={{ fontWeight: 800, fontSize: 18 }}>Any<span style={{ color: accent }}>Day</span></div>
+          )}
         </div>
 
         <div role="tablist" aria-label="מצב" style={{ display: "flex", gap: 4, background: "#F1EFF9", borderRadius: 11, padding: 3, marginInlineStart: 14 }}>

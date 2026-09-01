@@ -69,7 +69,7 @@ import { requireMonday } from "@/lib/monday-server";
 import { fetchBoards, parseBoardIds, coverage, type FetchedBoard } from "@/lib/board-fetch";
 import { renderDigest, digestSection } from "@/lib/digest-email";
 import { sendEmail } from "@/lib/send-email";
-import { getDigestTargets, recordDigestRun } from "@/lib/session";
+import { getDigestTargets, recordDigestRun, getOrgBranding } from "@/lib/session";
 import { rateLimit, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
@@ -214,11 +214,13 @@ async function runScheduled(params: Params) {
       }
 
       const cov = coverage(boards);
+      const branding = await getOrgBranding(t.orgId);
       const digest = renderDigest({
         boards: boards.map(digestSection),
         coverage: cov,
         generatedAt: new Date(),
         sourceLabel: boards.map((b) => `"${b.name}"`).join(" · "),
+        branding,
       });
 
       // A dry run reports exactly what it WOULD do, and sends nothing. This is
@@ -295,11 +297,15 @@ async function handle(req: NextRequest, params: Params) {
     return NextResponse.json({ error: "הבורד לא נמצא או שאין הרשאה אליו" }, { status: 404 });
 
   const cov = coverage(boards);
+  // The preview must look like the real send, branding included ("personal"
+  // mode has no org row and getOrgBranding returns empties on its own).
+  const branding = await getOrgBranding(guard.orgId);
   const digest = renderDigest({
     boards: boards.map(digestSection),
     coverage: cov,
     generatedAt: new Date(),
     sourceLabel: boards.map((b) => `"${b.name}"`).join(" · "),
+    branding,
   });
 
   // `preview=html` renders the email itself, so a person can JUDGE it. The
