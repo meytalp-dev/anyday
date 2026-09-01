@@ -224,7 +224,7 @@ function AppShell() {
           <div style={{ display: "grid", gridTemplateColumns: narrow ? "1fr" : "1fr 250px", maxWidth: 1260, margin: "0 auto", gap: 18, padding: narrow ? "14px 14px 90px" : "20px 20px 90px" }}>
             {narrow && <BoardRail boards={boards} active={active} setActive={setActiveBoards} collapsible />}
             <main style={{ minWidth: 0 }}>
-              {tab === "dash" && <Dashboard key={active.join()} names={activeNames} empty={activeAllEmpty} boards={activeBoards} />}
+              {tab === "dash" && <DashboardsHome names={activeNames} empty={activeAllEmpty} activeBoards={activeBoards} allBoards={boards} activeKey={active.join()} />}
               {tab === "people" && <People />}
               {tab === "insights" && (
                 <>
@@ -847,6 +847,275 @@ function PrefsCard({ boardId, boardName }: { boardId: string; boardName: string 
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/* ===== saved dashboards + wizard (wave 3) =====
+   The "לוח חי" tab is now a family: the automatic board (exactly what it
+   always was) plus the org's SAVED dashboards — each born in the wizard from
+   a purpose the user typed, approved before it was created, rendered live
+   from its stored spec. No locked tab name was touched: it all lives here. */
+
+interface SavedDash { id: string; title: string; purpose: string; sourceRef: string; createdAt: string }
+interface SpecW { kind: string; col?: string }
+
+const specWidgetLabel = (w: SpecW): string =>
+  w.kind === "breakdown" ? `פילוח לפי "${w.col}"`
+  : w.kind === "byOwner" ? `חלוקה לפי "${w.col}"`
+  : w.kind === "numberSummary" ? `סיכום "${w.col}"`
+  : w.kind === "attention" ? "מי דורש תשומת לב"
+  : "רשימת הפריטים";
+const specKey = (w: SpecW) => `${w.kind}|${w.col ?? ""}`;
+
+function DashboardsHome({ names, empty, activeBoards, allBoards, activeKey }: {
+  names: string[]; empty: boolean; activeBoards: BoardOpt[]; allBoards: BoardOpt[]; activeKey: string;
+}) {
+  const [list, setList] = useState<SavedDash[]>([]);
+  const [sel, setSel] = useState<string>("auto");
+  const [wiz, setWiz] = useState(false);
+
+  const load = () => {
+    fetch("/api/dashboards", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => { if (Array.isArray(d.dashboards)) setList(d.dashboards); })
+      .catch(() => { /* saved dashboards are additive — their absence hides the pills, nothing more */ });
+  };
+  useEffect(load, []);
+
+  const pill = (on: boolean): React.CSSProperties => ({
+    border: `1.5px solid ${on ? C.grape : "#E6E4F0"}`, background: on ? C.grapeL : C.panel,
+    color: on ? C.grape : C.muted, borderRadius: 99, padding: "7px 15px", fontSize: 12.5,
+    fontWeight: on ? 800 : 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap",
+  });
+
+  return (
+    <>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 16 }}>
+        <button style={pill(sel === "auto")} onClick={() => setSel("auto")}>⚡ הלוח החי</button>
+        {list.map((d) => (
+          <button key={d.id} style={pill(sel === d.id)} onClick={() => setSel(d.id)} title={d.purpose || d.title}>◆ {d.title}</button>
+        ))}
+        {allBoards.length > 0 && (
+          <button
+            onClick={() => setWiz(true)}
+            style={{ border: "1.5px dashed #C9C5E8", background: "none", color: C.grape, borderRadius: 99, padding: "7px 15px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}
+          >+ דשבורד חדש</button>
+        )}
+      </div>
+      {sel === "auto"
+        ? <Dashboard key={activeKey} names={names} empty={empty} boards={activeBoards} />
+        : <SavedDashboardView key={sel} id={sel} onGone={() => { setSel("auto"); load(); }} />}
+      {wiz && (
+        <DashboardWizard
+          boards={allBoards}
+          onClose={() => setWiz(false)}
+          onCreated={(id) => { setWiz(false); load(); setSel(id); }}
+        />
+      )}
+    </>
+  );
+}
+
+/* One saved dashboard, rendered live from its stored spec. */
+function SavedDashboardView({ id, onGone }: { id: string; onGone: () => void }) {
+  const [d, setD] = useState<{ title: string; purpose: string; boardName: string; widgets: Widget[]; coverage?: Cov } | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    fetch(`/api/dashboards/${id}`, { cache: "no-store" })
+      .then((r) => r.json())
+      .then((x) => {
+        if (!alive) return;
+        if (x.error) setErr(x.error); else setD(x);
+      })
+      .catch(() => { if (alive) setErr("שגיאה"); });
+    return () => { alive = false; };
+  }, [id]);
+
+  async function confirmDelete() {
+    setBusy(true);
+    try {
+      const r = await fetch(`/api/dashboards/${id}`, { method: "DELETE" });
+      if (r.ok) onGone();
+      else setErr((await r.json().catch(() => ({}))).error || "המחיקה נכשלה");
+    } finally { setBusy(false); setAsking(false); }
+  }
+
+  if (err) return <ErrBox msg={err} />;
+  if (!d) return <Spinner label="טוען את הדשבורד..." />;
+
+  const attention = d.widgets.find((w) => w.kind === "attention");
+  const attData = attention?.data as { count: number; items: { name: string; why: string }[] } | undefined;
+  const rest = d.widgets.filter((w) => w.kind !== "attention");
+
+  return (
+    <div style={{ animation: "rise .4s both" }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
+        <div style={{ flex: 1, minWidth: 220 }}>
+          <h1 style={{ fontSize: 23, fontWeight: 800, margin: "0 0 2px" }}>◆ {d.title}</h1>
+          <p style={{ fontSize: 13, color: C.muted, margin: 0 }}>
+            {`${d.purpose ? `"${d.purpose}" · ` : ""}חי מ-Monday · בורד "${d.boardName}"${d.coverage?.truncated ? ` · ${d.coverage.note}` : ""}`}
+          </p>
+        </div>
+        {asking ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+            <span style={{ fontSize: 12 }}>למחוק את הדשבורד?</span>
+            <button onClick={() => void confirmDelete()} disabled={busy} style={{ border: "none", background: C.coral, color: "#fff", borderRadius: 9, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: busy ? "wait" : "pointer", fontFamily: "inherit" }}>{busy ? "מוחקים…" : "כן, מחקו"}</button>
+            <button onClick={() => setAsking(false)} style={{ border: "1px solid #E6E4F0", background: "#fff", color: C.muted, borderRadius: 9, padding: "6px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>ביטול</button>
+          </div>
+        ) : (
+          <button onClick={() => setAsking(true)} title="מוחק את הדשבורד השמור. הנתונים ב-Monday לא משתנים." style={{ border: "1px solid #E6E4F0", background: "#fff", color: C.muted, borderRadius: 9, padding: "6px 13px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>מחיקה</button>
+        )}
+      </div>
+      {attData && attData.count > 0 && (
+        <div style={{ background: `linear-gradient(120deg,${C.coralL},${C.amberL})`, border: `1px solid ${C.coral}30`, borderRadius: 18, padding: "14px 18px", marginBottom: 16, display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+          <div style={{ fontSize: 26 }}>⚠️</div>
+          <div style={{ flex: 1, minWidth: 200 }}>
+            <div style={{ fontWeight: 800, fontSize: 14.5 }}>{attData.count} דורשים תשומת לב</div>
+            <div style={{ fontSize: 12.5, color: C.muted }}>{attData.items.slice(0, 3).map((x) => x.name).join(" · ")}{attData.count > 3 ? " ועוד…" : ""}</div>
+          </div>
+        </div>
+      )}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(300px,1fr))", gap: 14, alignItems: "start" }}>
+        {rest.map((w, i) => <ChartCard key={i} w={w} i={i} />)}
+      </div>
+    </div>
+  );
+}
+
+/* The wizard itself: purpose → proposal → approve → save. Nothing exists
+   until the user clicks save — preview→approve, the cbb8b80 principle. */
+function DashboardWizard({ boards, onClose, onCreated }: {
+  boards: BoardOpt[]; onClose: () => void; onCreated: (id: string) => void;
+}) {
+  const [step, setStep] = useState<1 | 2>(1);
+  const [boardId, setBoardId] = useState(boards[0]?.id ?? "");
+  const [purpose, setPurpose] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [title, setTitle] = useState("");
+  const [picked, setPicked] = useState<SpecW[]>([]);
+  const [menu, setMenu] = useState<SpecW[]>([]);
+  const [usedAi, setUsedAi] = useState(false);
+
+  async function propose() {
+    setBusy(true); setErr(null);
+    try {
+      const r = await fetch("/api/dashboard-wizard", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ boardId, purpose }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { setErr(d.error || "ההצעה נכשלה"); return; }
+      setTitle(d.spec.title); setPicked(d.spec.widgets); setMenu(d.menu || d.spec.widgets); setUsedAi(Boolean(d.usedAi));
+      setStep(2);
+    } catch { setErr("לא הצלחנו לפנות לשרת"); }
+    finally { setBusy(false); }
+  }
+
+  async function save() {
+    setBusy(true); setErr(null);
+    try {
+      const r = await fetch("/api/dashboards", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ boardId, title, purpose, spec: { widgets: picked } }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { setErr(d.error || "השמירה נכשלה"); return; }
+      onCreated(d.id);
+    } catch { setErr("לא הצלחנו לפנות לשרת"); }
+    finally { setBusy(false); }
+  }
+
+  function toggle(w: SpecW) {
+    const on = picked.some((p) => specKey(p) === specKey(w));
+    if (on) setPicked(picked.filter((p) => specKey(p) !== specKey(w)));
+    else if (picked.length < 8) setPicked([...picked, w]);
+  }
+
+  /* The proposal's order first (the AI ordered by the purpose), then whatever
+     else the board supports, unchecked. */
+  const rows: SpecW[] = [...picked, ...menu.filter((m) => !picked.some((p) => specKey(p) === specKey(m)))];
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(27,24,48,.44)", zIndex: 40, display: "grid", placeItems: "center", padding: 16, animation: "fade .2s both" }}>
+      <div onClick={(e) => e.stopPropagation()} role="dialog" aria-label="דשבורד חדש" style={{ background: "#fff", borderRadius: 20, width: "min(560px, 100%)", maxHeight: "88vh", overflowY: "auto", padding: "22px 24px", animation: "pop .25s both" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+          <div style={{ fontSize: 18, fontWeight: 800, flex: 1 }}>דשבורד חדש</div>
+          <button onClick={onClose} aria-label="סגירה" style={{ border: "none", background: "#F4F3FB", borderRadius: 9, width: 30, height: 30, cursor: "pointer", fontSize: 14, color: C.muted }}>✕</button>
+        </div>
+
+        {step === 1 && (
+          <>
+            <p style={{ fontSize: 13, color: C.muted, margin: "0 0 14px", lineHeight: 1.7 }}>
+              ספרו מה הדשבורד צריך לענות — והמערכת תרכיב הצעה מהנתונים שבאמת קיימים בלוח. שום דבר לא נוצר בלי אישורכם.
+            </p>
+            <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 6 }}>על איזה בורד?</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14, maxHeight: 180, overflowY: "auto" }}>
+              {boards.map((b, i) => {
+                const on = boardId === b.id; const c = pick(i);
+                return (
+                  <button key={b.id} onClick={() => setBoardId(b.id)} style={{ display: "flex", alignItems: "center", gap: 9, padding: "9px 11px", borderRadius: 12, border: `1.5px solid ${on ? c.fg : "#ECEBF5"}`, background: on ? c.bg : "#FAF9FE", cursor: "pointer", textAlign: "right", fontFamily: "inherit" }}>
+                    <span style={{ width: 9, height: 9, borderRadius: "50%", background: c.fg, opacity: on ? 1 : .3 }} />
+                    <span style={{ flex: 1, fontSize: 13, fontWeight: on ? 700 : 500 }}>{b.name}</span>
+                    <span style={{ fontSize: 11, color: C.muted }}>{b.items}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 6 }}>מה מטרת הדשבורד?</div>
+            <textarea
+              value={purpose} onChange={(e) => setPurpose(e.target.value)} maxLength={500} rows={3} autoFocus
+              placeholder='למשל: "לעקוב אחרי תורמים גדולים ולראות מי לא עודכן מזמן", "מצב התקציב מול הביצוע"...'
+              style={{ width: "100%", border: "1px solid #E6E4F0", borderRadius: 12, padding: "10px 13px", fontSize: 13, fontFamily: "inherit", resize: "vertical", outline: "none", boxSizing: "border-box", marginBottom: 14 }}
+            />
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <button onClick={() => void propose()} disabled={busy || !boardId} style={{ border: "none", background: C.grape, color: "#fff", borderRadius: 11, padding: "10px 22px", fontSize: 13.5, fontWeight: 700, cursor: busy ? "wait" : "pointer", fontFamily: "inherit" }}>
+                {busy ? "מרכיבים הצעה…" : "הציעו לי דשבורד ←"}
+              </button>
+              {err && <span style={{ fontSize: 12, color: C.coral }}>{err}</span>}
+            </div>
+          </>
+        )}
+
+        {step === 2 && (
+          <>
+            <p style={{ fontSize: 12.5, color: C.muted, margin: "0 0 14px", lineHeight: 1.7 }}>
+              {usedAi ? "ההצעה הורכבה לפי המטרה שכתבתם — רק מרכיבים שהלוח באמת תומך בהם." : "הצעה אוטומטית מהמנוע (ה-AI לא היה זמין) — רק מרכיבים שהלוח באמת תומך בהם."}
+              {" "}סמנו והורידו כרצונכם; הדשבורד ייווצר רק בלחיצה על שמירה.
+            </p>
+            <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 6 }}>שם הדשבורד</div>
+            <input
+              value={title} onChange={(e) => setTitle(e.target.value)} maxLength={80}
+              style={{ width: "100%", border: "1px solid #E6E4F0", borderRadius: 11, padding: "9px 13px", fontSize: 13.5, fontWeight: 700, fontFamily: "inherit", outline: "none", boxSizing: "border-box", marginBottom: 12 }}
+            />
+            <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 6 }}>הרכיבים ({picked.length}/8)</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
+              {rows.map((w) => {
+                const on = picked.some((p) => specKey(p) === specKey(w));
+                return (
+                  <button key={specKey(w)} onClick={() => toggle(w)} aria-pressed={on} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 12, border: `1.5px solid ${on ? C.grape : "#ECEBF5"}`, background: on ? C.grapeL : "#FAF9FE", cursor: "pointer", textAlign: "right", fontFamily: "inherit" }}>
+                    <span style={{ width: 17, height: 17, borderRadius: 6, border: `2px solid ${on ? C.grape : "#C9C5E8"}`, background: on ? C.grape : "#fff", color: "#fff", display: "grid", placeItems: "center", fontSize: 11, fontWeight: 800 }}>{on ? "✓" : ""}</span>
+                    <span style={{ flex: 1, fontSize: 13, fontWeight: on ? 700 : 500, color: on ? C.ink : C.muted }}>{specWidgetLabel(w)}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <button onClick={() => void save()} disabled={busy || !picked.length || !title.trim()} style={{ border: "none", background: C.grape, color: "#fff", borderRadius: 11, padding: "10px 22px", fontSize: 13.5, fontWeight: 700, cursor: busy ? "wait" : "pointer", fontFamily: "inherit", opacity: !picked.length || !title.trim() ? .5 : 1 }}>
+                {busy ? "שומרים…" : "✓ שמירת הדשבורד"}
+              </button>
+              <button onClick={() => { setStep(1); setErr(null); }} disabled={busy} style={{ border: "1px solid #E6E4F0", background: "#fff", color: C.muted, borderRadius: 11, padding: "10px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>→ חזרה</button>
+              {err && <span style={{ fontSize: 12, color: C.coral }}>{err}</span>}
+            </div>
+          </>
+        )}
+      </div>
+      <style>{`@keyframes fade{from{opacity:0}}@keyframes pop{from{opacity:0;transform:scale(.96) translateY(10px)}}`}</style>
     </div>
   );
 }

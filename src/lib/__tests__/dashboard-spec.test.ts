@@ -1,0 +1,94 @@
+/**
+ * חוזה ה-spec של דשבורד שמור (גל 3) — השכבה שאוכפת את חוקי הוויזרד בקוד:
+ * "רכיב שאין לו עמודה מתאימה לא קיים", "לא ממציאים", "4–8 רכיבים".
+ * ה-AI רק מציע; מה שנשמר עובר דרך sanitizeSpec מול הפרופיל האמיתי,
+ * ולכן פלט-AI עוין או שבור לעולם לא הופך לדשבורד שמצייר עמודות-רפאים.
+ */
+import { describe, it, expect } from "vitest";
+import { sanitizeSpec, defaultSpec } from "../dashboard-spec";
+import { profileBoard } from "../board-profile";
+import type { Board, Col, Item } from "../board-intelligence";
+
+const col = (id: string, title: string, type: string, settings?: object): Col => ({
+  id, title, type, ...(settings ? { settings_str: JSON.stringify(settings) } : {}),
+});
+const item = (name: string, values: Record<string, string>, cols: Col[]): Item => ({
+  id: name, name,
+  values: cols.map((c) => ({ colId: c.id, title: c.title, type: c.type, text: values[c.id] ?? "" })),
+});
+
+function donorsBoard(): Board {
+  const cols = [
+    col("status", "סטטוס קשר", "status", {
+      labels: [
+        { id: 1, name: "פעיל", color: "#00c875" },
+        { id: 2, name: "נותק", color: "#e2445c" },
+      ],
+    }),
+    col("amount", "סכום תרומה", "numbers"),
+    col("owner", "אחראי", "people"),
+  ];
+  const items = [
+    item("תורם 1", { status: "פעיל", amount: "500", owner: "דנה" }, cols),
+    item("תורם 2", { status: "נותק", amount: "300", owner: "יוסי" }, cols),
+  ];
+  return { id: "b1", name: "תורמים", columns: cols, items };
+}
+
+const profile = () => profileBoard(donorsBoard());
+
+describe("sanitizeSpec — פלט ה-AI עובר דרך הפרופיל, לא ישירות למסד", () => {
+  it("רכיב שמצביע על עמודה קיימת ומהסוג הנכון — שורד", () => {
+    const s = sanitizeSpec({ title: "תורמים", widgets: [{ kind: "breakdown", col: "סטטוס קשר" }] }, profile());
+    expect(s.widgets).toEqual([{ kind: "breakdown", col: "סטטוס קשר" }]);
+  });
+
+  it("עמודת-רפאים שהומצאה — הרכיב נזרק", () => {
+    const s = sanitizeSpec({ title: "x", widgets: [
+      { kind: "breakdown", col: "עמודה שלא קיימת" },
+      { kind: "attention" },
+    ] }, profile());
+    expect(s.widgets).toEqual([{ kind: "attention" }]);
+  });
+
+  it("סוג עמודה לא תואם (breakdown על עמודת מספר) — נזרק", () => {
+    const s = sanitizeSpec({ title: "x", widgets: [
+      { kind: "breakdown", col: "סכום תרומה" },
+      { kind: "numberSummary", col: "סכום תרומה" },
+    ] }, profile());
+    expect(s.widgets).toEqual([{ kind: "numberSummary", col: "סכום תרומה" }]);
+  });
+
+  it("kind שלא ברשימה המותרת — נזרק; לכל היותר 8 רכיבים; כפילויות מאוחדות", () => {
+    const many = Array.from({ length: 12 }, () => ({ kind: "attention" as const }));
+    const s = sanitizeSpec({ title: "x", widgets: [
+      { kind: "evilKind", col: "סטטוס קשר" },
+      ...many,
+      { kind: "list" },
+    ] }, profile());
+    expect(s.widgets.length).toBeLessThanOrEqual(8);
+    expect(s.widgets.filter((w) => w.kind === "attention").length).toBe(1);
+    expect(s.widgets.some((w) => (w.kind as string) === "evilKind")).toBe(false);
+  });
+
+  it("כותרת ארוכה/לא-מחרוזת נחתכת לגבולות; spec ריק לא קורס", () => {
+    const s = sanitizeSpec({ title: "א".repeat(500), widgets: [] }, profile());
+    expect(s.title.length).toBeLessThanOrEqual(80);
+    expect(s.widgets).toEqual([]);
+  });
+});
+
+describe("defaultSpec — הנפילה-הרכה כשה-AI לא זמין", () => {
+  it("נגזר מתפריט הפרופיל עצמו: כל רכיב עם עמודה אמיתית, עד 6", () => {
+    const p = profile();
+    const s = defaultSpec(p);
+    expect(s.widgets.length).toBeGreaterThan(0);
+    expect(s.widgets.length).toBeLessThanOrEqual(6);
+    const titles = new Set(p.columns.map((c) => c.title));
+    for (const w of s.widgets) if (w.col) expect(titles.has(w.col)).toBe(true);
+  });
+
+  it("שם הדשבורד נגזר משם הלוח", () => {
+    expect(defaultSpec(profile()).title).toContain("תורמים");
+  });
+});
