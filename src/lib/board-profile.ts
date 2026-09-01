@@ -160,6 +160,26 @@ function pinnedTitles(prefs: BoardPrefs): Set<string> {
 }
 
 /**
+ * Every column the prefs say MATTERS, by title — a mark arrives three ways:
+ * an explicit importantColumns id, a ⭐-pinned widget, or the column's own
+ * name written into the free-text purpose ("לעקוב אחרי סטטוס טיפול" names a
+ * column ⇒ it matters). Matching is against THIS board's own titles, never a
+ * word list of ours; titles under 3 characters are skipped ("שם" would match
+ * almost any sentence). One definition, used by both the ranking
+ * (applyPreferences) and the relevance filter (selectLiveWidgets) — a column
+ * the user asked for by name must never be statistically filtered away.
+ */
+export function markedColumnTitles(profile: BoardProfile, prefs: BoardPrefs): Set<string> {
+  const titles = pinnedTitles(prefs);
+  const goals = prefs.goalsText ?? "";
+  for (const c of profile.columns) {
+    if ((prefs.importantColumns ?? []).includes(c.id)) titles.add(c.title);
+    else if (c.title.length >= 3 && goals.includes(c.title)) titles.add(c.title);
+  }
+  return titles;
+}
+
+/**
  * Merge the user's preferences into a profile (W2-3). The rule is simple and
  * absolute: a column the user MARKED outranks every column they did not,
  * whatever the statistics say — "מה שחשוב למשתמש גובר על מה שמעניין
@@ -168,24 +188,11 @@ function pinnedTitles(prefs: BoardPrefs): Set<string> {
  * dashboard axis. Pure — the input profile is not mutated.
  */
 export function applyPreferences(profile: BoardProfile, prefs: BoardPrefs): BoardProfile {
-  // A mark arrives three ways: the explicit importantColumns list (by id), a
-  // ⭐-pinned widget on the live board (by the column title inside its key),
-  // or a column NAMED inside the free-text purpose — the user who writes
-  // "לעקוב אחרי סטטוס טיפול" just said what matters, and the board must react
-  // (משוב מיטל 1.9). Matching is against THIS board's own column titles, never
-  // a word list of ours, so the golden rule holds; titles shorter than 3
-  // characters are skipped ("שם" would match almost any sentence).
-  const titles = pinnedTitles(prefs);
-  const goals = prefs.goalsText ?? "";
+  // See markedColumnTitles for what counts as a mark (ids, pins, and columns
+  // named inside the purpose text — משוב מיטל 1.9).
+  const titles = markedColumnTitles(profile, prefs);
   const markedIds = new Set(
-    profile.columns
-      .filter(
-        (c) =>
-          (prefs.importantColumns ?? []).includes(c.id) ||
-          titles.has(c.title) ||
-          (c.title.length >= 3 && goals.includes(c.title))
-      )
-      .map((c) => c.id)
+    profile.columns.filter((c) => titles.has(c.title)).map((c) => c.id)
   );
   if (!markedIds.size) return profile;
 
@@ -246,6 +253,10 @@ export function selectLiveWidgets(
 ): { show: LiveWidget[]; more: LiveWidget[] } {
   const pinned = new Set(prefs.pinnedWidgets ?? []);
   const hidden = new Set(prefs.hiddenWidgets ?? []);
+  // A column the user marked — by pin, by id, or BY NAME in the purpose text —
+  // bypasses the signal filter: what was asked for in words is never
+  // statistically filtered away (משוב מיטל: "ביקשתי סטטוס טיפול").
+  const marked = markedColumnTitles(profile, prefs);
   const colOf = (title?: string) => profile.columns.find((c) => c.title === title);
 
   const candidates: LiveWidget[] = profile.widgets
@@ -264,7 +275,7 @@ export function selectLiveWidgets(
   const ordered = [...candidates.filter((w) => w.pinned), ...candidates.filter((w) => !w.pinned)];
   for (const w of ordered) {
     if (hidden.has(widgetKey(w))) { more.push(w); continue; }
-    if (!w.pinned && !signalOf(w)) { more.push(w); continue; }
+    if (!w.pinned && !(w.col && marked.has(w.col)) && !signalOf(w)) { more.push(w); continue; }
     if (show.length >= cap) { more.push(w); continue; }
     show.push(w);
   }

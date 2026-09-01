@@ -5,7 +5,7 @@
  * ולכן פלט-AI עוין או שבור לעולם לא הופך לדשבורד שמצייר עמודות-רפאים.
  */
 import { describe, it, expect } from "vitest";
-import { sanitizeSpec, defaultSpec } from "../dashboard-spec";
+import { sanitizeSpec, defaultSpec, ensureMentionedColumns } from "../dashboard-spec";
 import { profileBoard } from "../board-profile";
 import type { Board, Col, Item } from "../board-intelligence";
 
@@ -75,6 +75,36 @@ describe("sanitizeSpec — פלט ה-AI עובר דרך הפרופיל, לא י�
     const s = sanitizeSpec({ title: "א".repeat(500), widgets: [] }, profile());
     expect(s.title.length).toBeLessThanOrEqual(80);
     expect(s.widgets).toEqual([]);
+  });
+});
+
+describe("ensureMentionedColumns — מה שהתבקש בשמו חייב להופיע (משוב מיטל)", () => {
+  it("עמודה שנוקבה בשמה במטרה ונשמטה מההצעה — נדחפת לראש ה-spec", () => {
+    const s = ensureMentionedColumns(
+      { title: "x", widgets: [{ kind: "attention" }] },
+      "אני רוצה לעקוב אחרי סטטוס קשר",
+      profile()
+    );
+    expect(s.widgets[0]).toEqual({ kind: "breakdown", col: "סטטוס קשר" });
+  });
+
+  it("עמודה מוזכרת שכבר בהצעה — לא מוכפלת", () => {
+    const s = ensureMentionedColumns(
+      { title: "x", widgets: [{ kind: "breakdown", col: "סטטוס קשר" }] },
+      "פילוח סטטוס קשר",
+      profile()
+    );
+    expect(s.widgets.filter((w) => w.col === "סטטוס קשר").length).toBe(1);
+  });
+
+  it("מטרה שלא מזכירה אף עמודה — ה-spec לא משתנה", () => {
+    const spec = { title: "x", widgets: [{ kind: "attention" as const }] };
+    expect(ensureMentionedColumns(spec, "שנדע מה קורה", profile())).toEqual(spec);
+  });
+
+  it("עמודת מספר מוזכרת מקבלת numberSummary, לא breakdown", () => {
+    const s = ensureMentionedColumns({ title: "x", widgets: [] }, "כמה סכום תרומה נכנס", profile());
+    expect(s.widgets[0]).toEqual({ kind: "numberSummary", col: "סכום תרומה" });
   });
 });
 

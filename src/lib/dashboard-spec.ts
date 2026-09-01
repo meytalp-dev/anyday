@@ -78,6 +78,37 @@ function defaultTitle(profile: BoardProfile): string {
   return `דשבורד ${profile.boardName}`.slice(0, MAX_TITLE);
 }
 
+/** bucket -> the widget kind that shows one column of that bucket. */
+const BUCKET_KIND: Partial<Record<ColumnBucket, SpecWidgetKind>> = {
+  status: "breakdown",
+  people: "byOwner",
+  number: "numberSummary",
+};
+
+/**
+ * The explicit-ask guarantee (משוב מיטל: "ביקשתי סטטוס טיפול — הוא נתן רק את
+ * הפילוח"): a column the user NAMED in the purpose sentence must appear in the
+ * dashboard, whatever the AI proposed and whatever the relevance layer thinks.
+ * Matching is against this board's own column titles (short titles skipped);
+ * missing widgets are pushed to the FRONT — what was asked for leads.
+ */
+export function ensureMentionedColumns(
+  spec: DashboardSpec,
+  purpose: string,
+  profile: BoardProfile
+): DashboardSpec {
+  const additions: SpecWidget[] = [];
+  for (const c of profile.columns) {
+    if (c.title.length < 3 || !purpose.includes(c.title)) continue;
+    const kind = BUCKET_KIND[c.bucket];
+    if (!kind) continue;
+    if (spec.widgets.some((w) => w.col === c.title)) continue;
+    additions.push({ kind, col: c.title });
+  }
+  if (!additions.length) return spec;
+  return { ...spec, widgets: [...additions, ...spec.widgets].slice(0, MAX_SPEC_WIDGETS) };
+}
+
 /**
  * The deterministic proposal: the profile's own widget menu (already in
  * column-score order, already honest about what the board supports), trimmed

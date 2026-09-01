@@ -23,7 +23,7 @@ import { requireMonday } from "@/lib/monday-server";
 import { fetchBoards } from "@/lib/board-fetch";
 import { profileBoard, applyPreferences, selectLiveWidgets } from "@/lib/board-profile";
 import { readBoardPrefs } from "@/lib/board-prefs";
-import { sanitizeSpec, defaultSpec, type DashboardSpec } from "@/lib/dashboard-spec";
+import { sanitizeSpec, defaultSpec, ensureMentionedColumns, type DashboardSpec } from "@/lib/dashboard-spec";
 import { rateLimit, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
@@ -71,7 +71,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "הבורד לא נמצא או שאין הרשאה אליו" }, { status: 404 });
 
   const board = boards[0];
-  const prefs = await readBoardPrefs(guard.orgId, board.id);
+  const saved = await readBoardPrefs(guard.orgId, board.id);
+  // The purpose typed RIGHT NOW is a preference too: a column named in it must
+  // rank first and must survive the relevance filter, exactly like a saved one.
+  const prefs = { ...saved, goalsText: [saved.goalsText, purpose].filter(Boolean).join(" · ") };
   const profile = applyPreferences(profileBoard(board), prefs);
 
   let spec: DashboardSpec | null = null;
@@ -115,6 +118,11 @@ export async function POST(req: NextRequest) {
   }
 
   if (!spec) spec = defaultSpec(profile);
+
+  // The explicit-ask guarantee: a column the user NAMED in the purpose appears
+  // in the proposal, first — whatever the AI answered and whatever the
+  // relevance layer filtered (משוב מיטל: "ביקשתי סטטוס טיפול").
+  spec = ensureMentionedColumns(spec, purpose, profile);
 
   // The full menu rides along so the UI can offer what the AI did not pick.
   const menu = sanitizeSpec(

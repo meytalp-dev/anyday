@@ -254,6 +254,14 @@ describe("שכבת הרלוונטיות — מה מרוויח מקום על הל
     expect(more.some((w) => w.col === "סטטוס")).toBe(true);
   });
 
+  it("עמודה שנוקבה בשמה במשפט-המטרה עוקפת את מסנן הרלוונטיות (משוב מיטל: 'ביקשתי סטטוס טיפול')", () => {
+    // "ארץ" היא 98% ערך אחד — בלי אות. אבל המשתמשת כתבה אותה בשם המפורש:
+    // מה שהתבקש במילים גובר על כל סינון סטטיסטי.
+    const p = profileBoard(noisyBoard());
+    const { show } = selectLiveWidgets(p, { goalsText: "אני רוצה לראות פילוח לפי ארץ" });
+    expect(show.some((w) => w.col === "ארץ")).toBe(true);
+  });
+
   it("תקרה: לכל היותר 6 רכיבים מוצגים — לוח רגוע, לא עמוס", () => {
     const p = profileBoard(donorsBoard());
     const { show } = selectLiveWidgets(p, {});
