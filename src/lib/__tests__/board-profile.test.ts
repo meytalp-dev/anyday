@@ -10,7 +10,7 @@
  * כדי שכיול המשקולות לא ישבור אותן.
  */
 import { describe, it, expect } from "vitest";
-import { profileBoard, applyPreferences, selectLiveWidgets, hasSignal } from "../board-profile";
+import { profileBoard, applyPreferences, selectLiveWidgets, hasSignal, examplePurposes } from "../board-profile";
 import type { Board, Col, Item } from "../board-intelligence";
 
 /* ------------------------------------------------------------ בוני-עזר */
@@ -263,6 +263,21 @@ describe("שכבת הרלוונטיות — מה מרוויח מקום על הל
   it("הצמדת רכיב מקדמת את העמודה שלו גם בפרופיל (הוויזרד רואה את זה)", () => {
     const p = applyPreferences(profileBoard(donorsBoard()), { pinnedWidgets: ["numberSummary|סכום תרומה"] });
     expect(p.columns[0].title).toBe("סכום תרומה");
+  });
+});
+
+describe("examplePurposes — דוגמאות למה אפשר לבנות, מהלוח עצמו (משוב מיטל)", () => {
+  it("הדוגמאות נבנות מהעמודות האמיתיות של הלוח — לא טקסט גנרי", () => {
+    const ex = examplePurposes(profileBoard(donorsBoard()));
+    expect(ex.some((e) => e.includes("סטטוס קשר"))).toBe(true);
+    expect(ex.some((e) => e.includes("סכום תרומה"))).toBe(true);
+  });
+
+  it("לכל היותר 4 דוגמאות, ותמיד יש לפחות אחת — גם בלוח דל", () => {
+    const cols = [{ id: "t", title: "הערות", type: "text" } as Col];
+    const bare = profileBoard({ id: "b", name: "לוח", columns: cols, items: [] });
+    expect(examplePurposes(bare).length).toBeGreaterThanOrEqual(1);
+    expect(examplePurposes(profileBoard(donorsBoard())).length).toBeLessThanOrEqual(4);
   });
 });
 

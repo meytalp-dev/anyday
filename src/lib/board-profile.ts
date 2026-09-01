@@ -272,6 +272,27 @@ export function selectLiveWidgets(
 }
 
 /**
+ * Clickable example purposes for the wizard (משוב מיטל: "צריך לתת דוגמאות
+ * לדברים שאפשר לבנות"). Built from THIS board's own signal-bearing columns —
+ * an example that names the user's real column teaches what a purpose looks
+ * like far better than generic text, and never promises a widget the board
+ * cannot deliver. Always ends with one generic example so even a bare board
+ * offers something to click.
+ */
+export function examplePurposes(profile: BoardProfile): string[] {
+  const first = (b: ColumnBucket) => profile.columns.find((c) => c.bucket === b && hasSignal(c));
+  const out: string[] = [];
+  const st = first("status");
+  if (st) out.push(`לראות במבט אחד את הפילוח לפי ${st.title}, ומי דורש טיפול`);
+  const num = first("number");
+  if (num) out.push(`לעקוב אחרי ${num.title} — הסכום, הממוצע, ומי בולט`);
+  const ppl = first("people");
+  if (ppl) out.push(`חלוקת עומס: מי מטפל בכמה, לפי ${ppl.title}`);
+  out.push("תמונת מצב שבועית להנהלה — רק המספרים החשובים");
+  return out.slice(0, 4);
+}
+
+/**
  * The widget menu, in the order the profile ranks the columns that feed it.
  * Every entry names its column — the wizard's rule "a widget with no matching
  * column does not exist" is enforced here, not in the prompt.

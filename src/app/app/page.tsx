@@ -12,6 +12,7 @@ import { SmartBuilder } from "@/components/builder/SmartBuilder";
 import type { MondayBoard, MondayItem } from "@/types";
 import { parseDelimited, headRow, normKey, looksLikeHeader } from "@/lib/sheet-to-board";
 import { useUser } from "@/lib/use-user";
+import { examplePurposes, type BoardProfile } from "@/lib/board-profile";
 
 /* ===== "לוח חי" palette — colorful, energetic, NOT flat purple ===== */
 const C = {
@@ -971,6 +972,19 @@ function DashboardWizard({ boards, onClose, onCreated }: {
   const [picked, setPicked] = useState<SpecW[]>([]);
   const [menu, setMenu] = useState<SpecW[]>([]);
   const [usedAi, setUsedAi] = useState(false);
+  /* Example purposes, built from the SELECTED board's own columns (משוב מיטל:
+     "צריך לתת דוגמאות לדברים שאפשר לבנות") — an example naming the user's real
+     column teaches what a purpose looks like better than generic text. */
+  const [examples, setExamples] = useState<string[]>([]);
+  useEffect(() => {
+    if (!boardId) return;
+    let alive = true;
+    fetch(`/api/board-profile?boards=${boardId}`, { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => { if (alive && d.profiles?.[0]) setExamples(examplePurposes(d.profiles[0] as BoardProfile)); })
+      .catch(() => { /* examples are a nicety — the wizard works without them */ });
+    return () => { alive = false; };
+  }, [boardId]);
 
   async function propose() {
     setBusy(true); setErr(null);
@@ -1038,9 +1052,20 @@ function DashboardWizard({ boards, onClose, onCreated }: {
               })}
             </div>
             <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 6 }}>מה מטרת הדשבורד?</div>
+            {examples.length > 0 && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+                <span style={{ fontSize: 11, color: C.muted, fontWeight: 700, alignSelf: "center" }}>למשל:</span>
+                {examples.map((e) => (
+                  <button key={e} onClick={() => setPurpose(e)}
+                    style={{ border: "1px solid #E6E4F0", background: purpose === e ? C.grapeL : "#FAF9FE", color: purpose === e ? C.grape : C.muted, borderRadius: 99, padding: "4px 11px", fontSize: 11.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", textAlign: "right" }}>
+                    {e}
+                  </button>
+                ))}
+              </div>
+            )}
             <textarea
               value={purpose} onChange={(e) => setPurpose(e.target.value)} maxLength={500} rows={3} autoFocus
-              placeholder='למשל: "לעקוב אחרי תורמים גדולים ולראות מי לא עודכן מזמן", "מצב התקציב מול הביצוע"...'
+              placeholder="במילים שלכם: על מה הדשבורד צריך לענות כל בוקר? (או לחצו על דוגמה למעלה)"
               style={{ width: "100%", border: "1px solid #E6E4F0", borderRadius: 12, padding: "10px 13px", fontSize: 13, fontFamily: "inherit", resize: "vertical", outline: "none", boxSizing: "border-box", marginBottom: 14 }}
             />
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
