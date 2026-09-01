@@ -772,7 +772,11 @@ function PrefsCard({ boardId, boardName }: { boardId: string; boardName: string 
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) setMsg(d.error || "השמירה נכשלה");
-      else { setPrefs({ ...prefs, goalsText: goals }); setMsg("נשמר ✓"); setOpen(false); }
+      else {
+        setPrefs({ ...prefs, goalsText: goals }); setMsg("נשמר ✓"); setOpen(false);
+        // עמודה שהוזכרה במשפט משנה את סדר הלוח — שיראו את זה מיד, לא ברענון הבא.
+        window.dispatchEvent(new Event("anyday-refresh"));
+      }
     } catch {
       setMsg("לא הצלחנו לפנות לשרת");
     } finally {
@@ -785,7 +789,7 @@ function PrefsCard({ boardId, boardName }: { boardId: string; boardName: string 
 
   return (
     <div style={{ background: C.panel, border: "1px solid #ECEBF5", borderInlineStart: `4px solid ${savedGoals ? C.teal : C.amber}`, borderRadius: 16, marginBottom: 16, animation: "rise .4s both" }}>
-      <button onClick={() => setOpen(!open)} aria-expanded={open} style={{ width: "100%", border: "none", background: "none", fontFamily: "inherit", cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: "12px 18px", textAlign: "right" }}>
+      <button onClick={() => { setOpen(!open); setMsg(null); }} aria-expanded={open} style={{ width: "100%", border: "none", background: "none", fontFamily: "inherit", cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: "12px 18px", textAlign: "right" }}>
         <span style={{ fontSize: 16 }}>🎯</span>
         <span style={{ fontSize: 13.5, fontWeight: 800, color: C.ink }}>{`מה מטרת ״${boardName}״?`}</span>
         <span style={{ fontSize: 12, color: C.muted, flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>

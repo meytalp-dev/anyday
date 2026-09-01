@@ -181,6 +181,18 @@ describe("applyPreferences — 'מה חשוב לך' גובר על הסטטיסט
     expect(p.widgets[0]).toMatchObject({ kind: "timeline", col: "תאריך תרומה אחרונה" });
   });
 
+  it("עמודה שמוזכרת במשפט-המטרה נחשבת חשובה — הלוח מגיב למה שכתבו (משוב מיטל)", () => {
+    // מיטל כתבה "סטטוס טיפול" בשדה המטרה וציפתה שהלוח יגיב. ההתאמה היא מול
+    // כותרות העמודות של הלוח שלה עצמה — לא רשימת מילים שלנו (עקרון הזהב שמור).
+    const p = applyPreferences(profileBoard(donorsBoard()), { goalsText: "לעקוב אחרי סכום תרומה של כל תורם" });
+    expect(p.columns[0].title).toBe("סכום תרומה");
+  });
+
+  it("משפט-מטרה שלא מזכיר אף עמודה — הפרופיל נשאר כשהיה", () => {
+    const base = profileBoard(donorsBoard());
+    expect(applyPreferences(base, { goalsText: "שנדע מה קורה" })).toEqual(base);
+  });
+
   it("הפרופיל המקורי לא משתנה (אין מוטציה)", () => {
     const base = profileBoard(donorsBoard());
     const before = JSON.parse(JSON.stringify(base));

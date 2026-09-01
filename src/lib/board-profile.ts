@@ -168,12 +168,23 @@ function pinnedTitles(prefs: BoardPrefs): Set<string> {
  * dashboard axis. Pure — the input profile is not mutated.
  */
 export function applyPreferences(profile: BoardProfile, prefs: BoardPrefs): BoardProfile {
-  // A mark arrives two ways: the explicit importantColumns list (by id), or a
-  // ⭐-pinned widget on the live board (by the column title inside its key).
+  // A mark arrives three ways: the explicit importantColumns list (by id), a
+  // ⭐-pinned widget on the live board (by the column title inside its key),
+  // or a column NAMED inside the free-text purpose — the user who writes
+  // "לעקוב אחרי סטטוס טיפול" just said what matters, and the board must react
+  // (משוב מיטל 1.9). Matching is against THIS board's own column titles, never
+  // a word list of ours, so the golden rule holds; titles shorter than 3
+  // characters are skipped ("שם" would match almost any sentence).
   const titles = pinnedTitles(prefs);
+  const goals = prefs.goalsText ?? "";
   const markedIds = new Set(
     profile.columns
-      .filter((c) => (prefs.importantColumns ?? []).includes(c.id) || titles.has(c.title))
+      .filter(
+        (c) =>
+          (prefs.importantColumns ?? []).includes(c.id) ||
+          titles.has(c.title) ||
+          (c.title.length >= 3 && goals.includes(c.title))
+      )
       .map((c) => c.id)
   );
   if (!markedIds.size) return profile;
