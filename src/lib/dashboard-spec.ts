@@ -8,7 +8,7 @@
 // the deterministic fallback used when the AI is unavailable, which keeps the
 // wizard working (and testable) offline.
 
-import { selectLiveWidgets, type BoardProfile, type ColumnBucket } from "./board-profile";
+import { selectLiveWidgets, columnMentioned, type BoardProfile, type ColumnBucket } from "./board-profile";
 
 /** The kinds a saved dashboard can render. Per-record `timeline` is deliberately
  *  absent: it tells one row's story, not a board's, so it lives on the profile
@@ -99,7 +99,7 @@ export function ensureMentionedColumns(
 ): DashboardSpec {
   const additions: SpecWidget[] = [];
   for (const c of profile.columns) {
-    if (c.title.length < 3 || !purpose.includes(c.title)) continue;
+    if (!columnMentioned(c.title, purpose)) continue;
     const kind = BUCKET_KIND[c.bucket];
     if (!kind) continue;
     if (spec.widgets.some((w) => w.col === c.title)) continue;

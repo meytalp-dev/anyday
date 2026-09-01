@@ -160,6 +160,33 @@ function pinnedTitles(prefs: BoardPrefs): Set<string> {
 }
 
 /**
+ * Does this free text mention this column — flexibly? (בקשת מיטל: התאמה גמישה.)
+ * Exact title substring always matches. Beyond that, word-level matching with
+ * Hebrew prefix tolerance ("הסטטוס" ↔ "סטטוס", "בטלפון" ↔ "טלפון"): at least
+ * half the title's words must appear in the text, and the matched words must
+ * total 4+ characters — so "טלפון" finds "מספר טלפון", but "בית שאן" does NOT
+ * light up "בית ספר", and a two-letter title like "שם" never matches by parts.
+ * Deterministic and per-board — still no word list of ours (the golden rule).
+ */
+export function columnMentioned(title: string, text: string): boolean {
+  const t = title.trim();
+  if (!t || !text) return false;
+  if (t.length >= 3 && text.includes(t)) return true;
+
+  const words = (s: string) => s.split(/[^\p{L}\p{N}]+/u).filter((w) => w.length >= 2);
+  // Strip one leading Hebrew prefix letter (ה/ו/ב/ל/ש/כ) when 3+ letters remain.
+  const strip = (w: string) => (w.length >= 4 && "הובלשכ".includes(w[0]) ? w.slice(1) : w);
+
+  const textSet = new Set(words(text).flatMap((w) => [w, strip(w)]));
+  const titleWords = words(t);
+  if (!titleWords.length) return false;
+
+  const matched = titleWords.filter((w) => textSet.has(w) || textSet.has(strip(w)));
+  const matchedLen = matched.reduce((s, w) => s + w.length, 0);
+  return matched.length / titleWords.length >= 0.5 && matchedLen >= 4;
+}
+
+/**
  * Every column the prefs say MATTERS, by title — a mark arrives three ways:
  * an explicit importantColumns id, a ⭐-pinned widget, or the column's own
  * name written into the free-text purpose ("לעקוב אחרי סטטוס טיפול" names a
@@ -174,7 +201,7 @@ export function markedColumnTitles(profile: BoardProfile, prefs: BoardPrefs): Se
   const goals = prefs.goalsText ?? "";
   for (const c of profile.columns) {
     if ((prefs.importantColumns ?? []).includes(c.id)) titles.add(c.title);
-    else if (c.title.length >= 3 && goals.includes(c.title)) titles.add(c.title);
+    else if (columnMentioned(c.title, goals)) titles.add(c.title);
   }
   return titles;
 }

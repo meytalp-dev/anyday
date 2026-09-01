@@ -10,7 +10,7 @@
  * כדי שכיול המשקולות לא ישבור אותן.
  */
 import { describe, it, expect } from "vitest";
-import { profileBoard, applyPreferences, selectLiveWidgets, hasSignal, examplePurposes } from "../board-profile";
+import { profileBoard, applyPreferences, selectLiveWidgets, hasSignal, examplePurposes, columnMentioned } from "../board-profile";
 import type { Board, Col, Item } from "../board-intelligence";
 
 /* ------------------------------------------------------------ בוני-עזר */
@@ -271,6 +271,37 @@ describe("שכבת הרלוונטיות — מה מרוויח מקום על הל
   it("הצמדת רכיב מקדמת את העמודה שלו גם בפרופיל (הוויזרד רואה את זה)", () => {
     const p = applyPreferences(profileBoard(donorsBoard()), { pinnedWidgets: ["numberSummary|סכום תרומה"] });
     expect(p.columns[0].title).toBe("סכום תרומה");
+  });
+});
+
+describe("columnMentioned — התאמה גמישה בין מה שנכתב לשם העמודה (בקשת מיטל)", () => {
+  it("שם מדויק — תמיד מתאים", () => {
+    expect(columnMentioned("סטטוס טיפול", "לעקוב אחרי סטטוס טיפול")).toBe(true);
+  });
+
+  it("קידומת עברית: 'הסטטוס' מתאים ל'סטטוס טיפול'", () => {
+    expect(columnMentioned("סטטוס טיפול", "לראות את הסטטוס של כולם")).toBe(true);
+  });
+
+  it("מילה אחת מתוך כותרת דו-מילתית: 'טלפון' מתאים ל'מספר טלפון'", () => {
+    expect(columnMentioned("מספר טלפון", "שיהיו לי כל מספרי הטלפון")).toBe(true);
+  });
+
+  it("מילה קצרה/שכיחה לא מדביקה עמודה בטעות: 'בית שאן' לא מתאים ל'בית ספר'", () => {
+    expect(columnMentioned("בית ספר", "בוגרי בית שאן שלנו")).toBe(false);
+  });
+
+  it("כותרת קצרצרה ('שם') לא נתפסת על כל משפט", () => {
+    expect(columnMentioned("שם", "רשימת שמות או שם כלשהו")).toBe(false);
+  });
+
+  it("טקסט שלא קשור — לא מתאים", () => {
+    expect(columnMentioned("סטטוס טיפול", "שנדע מה קורה")).toBe(false);
+  });
+
+  it("ההתאמה הגמישה חיה גם בדירוג: 'הסטטוס' מרים את 'סטטוס קשר' לראש הלוח", () => {
+    const p = applyPreferences(profileBoard(donorsBoard()), { goalsText: "מה הסטטוס אצל כולם" });
+    expect(p.columns[0].title).toBe("סטטוס קשר");
   });
 });
 
