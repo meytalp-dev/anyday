@@ -22,6 +22,8 @@ import { fetchBoards } from "@/lib/board-fetch";
 import { profileBoard, applyPreferences } from "@/lib/board-profile";
 import { readBoardPrefs } from "@/lib/board-prefs";
 import { sanitizeSpec } from "@/lib/dashboard-spec";
+import { fetchBoardMeta } from "@/lib/board-fetch";
+import { matchStatusColumn } from "@/lib/cross-board";
 import { rateLimit, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
@@ -75,8 +77,57 @@ export async function POST(req: NextRequest) {
   if (!rl.ok) return noStore({ error: RATE_LIMIT_MESSAGE }, { status: 429 });
 
   const body = (await req.json().catch(() => ({}))) as {
-    boardId?: unknown; title?: unknown; purpose?: unknown; spec?: unknown;
+    boardId?: unknown; boardIds?: unknown; title?: unknown; purpose?: unknown; spec?: unknown;
   };
+
+  // ── cross-board dashboard (בקשת מיטל): one column, sliced across boards ──
+  const crossW = (Array.isArray((body.spec as { widgets?: unknown[] })?.widgets)
+    ? ((body.spec as { widgets: { kind?: unknown; col?: unknown }[] }).widgets)
+    : []
+  ).find((w) => w?.kind === "crossBreakdown");
+  if (crossW) {
+    const colQuery = String(crossW.col ?? "").trim().slice(0, 120);
+    const ids = (Array.isArray(body.boardIds) ? body.boardIds : [])
+      .map((x) => String(x).trim())
+      .filter((x) => /^\d+$/.test(x))
+      .slice(0, 10);
+    if (!colQuery || ids.length < 2)
+      return noStore({ error: "חיתוך חוצה-לוחות דורש עמודה ולפחות שני לוחות" }, { status: 400 });
+
+    // Validate against the boards' REAL columns — columns only, no items.
+    const guard = await requireMonday();
+    if (!guard.ok) return noStore({ error: guard.error }, { status: guard.status });
+    let meta;
+    try {
+      meta = await fetchBoardMeta(ids, guard.token);
+    } catch (e: unknown) {
+      return noStore({ error: e instanceof Error ? e.message : "שגיאה בקריאת הלוחות" }, { status: 502 });
+    }
+    const matched = meta.filter((b) => matchStatusColumn(b, colQuery));
+    if (matched.length < 2)
+      return noStore({ error: `עמודה שמתאימה ל"${colQuery}" נמצאה בפחות משני לוחות` }, { status: 400 });
+
+    const service = createServiceClient();
+    if (!service) return noStore({ error: "אחסון לא זמין" }, { status: 503 });
+    const title = String(body.title ?? "").trim().slice(0, 80) || `"${colQuery}" לפי לוח`;
+    const { data, error } = await service
+      .from("dashboards")
+      .insert({
+        org_id: ctx.orgId,
+        title,
+        purpose: String(body.purpose ?? "").slice(0, MAX_PURPOSE),
+        source_kind: "monday",
+        source_ref: matched.map((b) => b.id).join(","),
+        spec: { title, widgets: [{ kind: "crossBreakdown", col: colQuery }] },
+        created_by: ctx.userId,
+      })
+      .select("id")
+      .single();
+    if (error || !data)
+      return noStore({ error: `${error?.message ?? "השמירה נכשלה"} — ודאו ש-supabase-schema-v6.sql הורצה` }, { status: 502 });
+    return noStore({ ok: true, id: data.id as string });
+  }
+
   const boardId = String(body.boardId ?? "").trim();
   if (!/^\d+$/.test(boardId)) return noStore({ error: "חסר boardId" }, { status: 400 });
 

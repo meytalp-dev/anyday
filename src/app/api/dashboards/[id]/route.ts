@@ -15,9 +15,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { getOrgContext } from "@/lib/session";
 import { createServiceClient, isSupabaseServerConfigured } from "@/lib/supabase-server";
 import { requireMonday } from "@/lib/monday-server";
-import { fetchBoards, coverage } from "@/lib/board-fetch";
+import { fetchBoards, parseBoardIds, coverage } from "@/lib/board-fetch";
 import { computeSpecWidgets } from "@/lib/dashboard-compute";
-import { statusTones } from "@/lib/board-intelligence";
+import { crossBreakdown } from "@/lib/cross-board";
+import { statusTones, type Widget } from "@/lib/board-intelligence";
 import type { DashboardSpec } from "@/lib/dashboard-spec";
 import { rateLimit, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit";
 
@@ -55,24 +56,39 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const guard = await requireMonday();
   if (!guard.ok) return noStore({ error: guard.error }, { status: guard.status });
 
+  // source_ref is one board id — or a csv of several, for a cross-board
+  // dashboard (בקשת מיטל: "סטטוס טיפול" מכל לוחות בתי הספר יחד).
+  const ids = parseBoardIds(String(data.source_ref), 10);
   let boards;
   try {
-    boards = await fetchBoards([String(data.source_ref)], guard.token);
+    boards = await fetchBoards(ids, guard.token);
   } catch (e: unknown) {
     return noStore({ error: e instanceof Error ? e.message : "שגיאה בקריאת הבורד" }, { status: 502 });
   }
   if (!boards.length)
     return noStore({ error: "בורד המקור לא נמצא ב-Monday או שאין אליו הרשאה" }, { status: 404 });
 
-  const board = boards[0];
-  const widgets = computeSpecWidgets(board, data.spec as DashboardSpec);
+  const spec = data.spec as DashboardSpec;
+  const widgets: Widget[] = [];
+  for (const w of spec.widgets) {
+    if ((w.kind as string) === "crossBreakdown") {
+      const cw = w.col ? crossBreakdown(boards, w.col) : null;
+      if (cw) widgets.push(cw);
+    }
+  }
+  // Single-board widgets render off the first board — a cross dashboard's spec
+  // simply has none of them, and a regular dashboard has exactly one board.
+  widgets.push(...computeSpecWidgets(boards[0], spec));
+
+  const tones: Record<string, string> = {};
+  for (const b of boards) Object.assign(tones, statusTones(b));
 
   return noStore({
     title: data.title as string,
     purpose: (data.purpose as string) ?? "",
-    boardName: board.name,
+    boardName: boards.map((b) => b.name).join(" · "),
     widgets,
-    tones: statusTones(board),
+    tones,
     coverage: coverage(boards),
   });
 }

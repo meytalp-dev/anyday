@@ -835,6 +835,7 @@ const specWidgetLabel = (w: SpecW): string =>
   w.kind === "breakdown" ? `פילוח לפי "${w.col}"`
   : w.kind === "byOwner" ? `חלוקה לפי "${w.col}"`
   : w.kind === "numberSummary" ? `סיכום "${w.col}"`
+  : w.kind === "crossBreakdown" ? `"${w.col}" מכל הלוחות יחד`
   : w.kind === "attention" ? "מי דורש תשומת לב"
   : "רשימת הפריטים";
 const specKey = (w: SpecW) => `${w.kind}|${w.col ?? ""}`;
@@ -975,6 +976,10 @@ function DashboardWizard({ boards, onClose, onCreated }: {
   /* "ביקשת עמודה שלא בלוח הזה — היא קיימת בלוח אחר": ההודעה הכנה מהשרת,
      עם כפתור שמעביר ללוח הנכון (המקרה של מיטל עם "סטטוס טיפול"). */
   const [note, setNote] = useState<{ text: string; boardId: string; boardName: string } | null>(null);
+  /* חיתוך חוצה-לוחות: העמודה קיימת בכמה לוחות (אחד לכל בית ספר) — ההצעה
+     החכמה היא דשבורד אחד שקורא אותה מכולם, בפילוח לפי לוח (בקשת מיטל). */
+  const [cross, setCross] = useState<{ column: string; boardIds: string[]; boardNames: string[] } | null>(null);
+  const [crossSave, setCrossSave] = useState<string[] | null>(null);
   /* Example purposes, built from the SELECTED board's own columns (משוב מיטל:
      "צריך לתת דוגמאות לדברים שאפשר לבנות") — an example naming the user's real
      column teaches what a purpose looks like better than generic text. */
@@ -1000,9 +1005,22 @@ function DashboardWizard({ boards, onClose, onCreated }: {
       if (!r.ok) { setErr(d.error || "ההצעה נכשלה"); return; }
       setTitle(d.spec.title); setPicked(d.spec.widgets); setMenu(d.menu || d.spec.widgets); setUsedAi(Boolean(d.usedAi));
       setNote(d.note ?? null);
+      setCross(d.cross ?? null);
+      setCrossSave(null);
       setStep(2);
     } catch { setErr("לא הצלחנו לפנות לשרת"); }
     finally { setBusy(false); }
+  }
+
+  /* המעבר להצעה החוצה: רכיב אחד שקורא את העמודה מכל הלוחות שנמצאה בהם. */
+  function goCross() {
+    if (!cross) return;
+    setPicked([{ kind: "crossBreakdown", col: cross.column }]);
+    setMenu([{ kind: "crossBreakdown", col: cross.column }]);
+    setTitle(`"${cross.column}" לפי לוח`);
+    setCrossSave(cross.boardIds);
+    setUsedAi(false);
+    setNote(null);
   }
 
   async function save() {
@@ -1010,7 +1028,11 @@ function DashboardWizard({ boards, onClose, onCreated }: {
     try {
       const r = await fetch("/api/dashboards", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ boardId, title, purpose, spec: { widgets: picked } }),
+        body: JSON.stringify(
+          crossSave
+            ? { boardIds: crossSave, title, purpose, spec: { widgets: picked } }
+            : { boardId, title, purpose, spec: { widgets: picked } }
+        ),
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) { setErr(d.error || "השמירה נכשלה"); return; }
@@ -1086,10 +1108,23 @@ function DashboardWizard({ boards, onClose, onCreated }: {
             {note && (
               <div style={{ background: C.amberL, border: `1px solid ${C.amber}55`, borderRadius: 12, padding: "10px 14px", marginBottom: 12 }}>
                 <div style={{ fontSize: 12.5, color: C.ink, lineHeight: 1.6, marginBottom: 7 }}>💡 {note.text}</div>
-                <button
-                  onClick={() => { setBoardId(note.boardId); setNote(null); setStep(1); }}
-                  style={{ border: "none", background: C.amber, color: "#fff", borderRadius: 9, padding: "6px 13px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
-                >{`לבנות על ״${note.boardName}״ במקום ←`}</button>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {cross && (
+                    <button
+                      onClick={goCross}
+                      style={{ border: "none", background: C.grape, color: "#fff", borderRadius: 9, padding: "6px 13px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
+                    >{`📊 להציג את ״${cross.column}״ מכל ${cross.boardIds.length} הלוחות יחד ←`}</button>
+                  )}
+                  <button
+                    onClick={() => { setBoardId(note.boardId); setNote(null); setCross(null); setStep(1); }}
+                    style={{ border: "none", background: C.amber, color: "#fff", borderRadius: 9, padding: "6px 13px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
+                  >{`לבנות על ״${note.boardName}״ בלבד ←`}</button>
+                </div>
+              </div>
+            )}
+            {crossSave && cross && (
+              <div style={{ background: C.grapeL, border: `1px solid ${C.grape}44`, borderRadius: 12, padding: "10px 14px", marginBottom: 12, fontSize: 12.5, color: C.ink, lineHeight: 1.6 }}>
+                📊 דשבורד חוצה-לוחות: ״{cross.column}״ ייקרא חי מ-{cross.boardNames.join(" · ")} — ויוצג בפילוח לפי לוח.
               </div>
             )}
             <p style={{ fontSize: 12.5, color: C.muted, margin: "0 0 14px", lineHeight: 1.7 }}>
@@ -1287,6 +1322,46 @@ function ChartBody({ w, c }: { w: Widget; c: { fg: string; bg: string } }) {
         <div style={{ height: 9, borderRadius: 999, background: "#F2F1F9", overflow: "hidden" }}><div style={{ width: `${(r.n / max) * 100}%`, height: "100%", background: sc.fg, borderRadius: 999, transition: "width .6s cubic-bezier(.2,.8,.2,1)" }} /></div>
         {isOpen && canOpen && <DrillList names={drill![r.label]} accent={sc.fg} />}
       </div>; })}</div>;
+  }
+  if (w.kind === "crossBreakdown") {
+    // One column, read from several boards (בקשת מיטל): a group per board —
+    // its name, a stacked bar of its own label colours, and the counts.
+    const groups = (d.groups as { boardName: string; colTitle: string; total: number; rows: { label: string; n: number; tone?: string }[] }[]) || [];
+    const skipped = (d.skipped as string[]) || [];
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        {groups.map((g) => {
+          const shown = g.rows.filter((r) => r.label !== "— ריק —").slice(0, 6);
+          const denom = g.total || 1;
+          return (
+            <div key={g.boardName}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 5 }}>
+                <span style={{ fontSize: 12.5, fontWeight: 800, color: C.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 200 }}>{g.boardName}</span>
+                <span style={{ fontSize: 11, color: C.muted, whiteSpace: "nowrap" }}>{g.total} רשומות</span>
+              </div>
+              <div style={{ display: "flex", height: 12, borderRadius: 999, overflow: "hidden", background: "#F2F1F9", marginBottom: 6 }}>
+                {shown.map((r) => (
+                  <div key={r.label} title={`${r.label}: ${r.n}`} style={{ width: `${(r.n / denom) * 100}%`, background: toneStyle(r.tone).fg }} />
+                ))}
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                {shown.map((r) => {
+                  const sc = toneStyle(r.tone);
+                  return (
+                    <span key={r.label} style={{ fontSize: 10.5, fontWeight: 700, color: sc.fg, background: sc.bg, borderRadius: 999, padding: "2px 8px", whiteSpace: "nowrap" }}>
+                      {r.label} · {r.n}
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+        {skipped.length > 0 && (
+          <div style={{ fontSize: 11, color: C.muted }}>בלוחות הבאים לא נמצאה העמודה: {skipped.join(" · ")}</div>
+        )}
+      </div>
+    );
   }
   if (w.kind === "numberSummary")
     return <div style={{ display: "flex", gap: 10 }}>{[["סה\"כ", d.sum], ["ממוצע", d.avg], ["מקס׳", d.max]].map(([l, v]) => <div key={l as string} style={{ flex: 1, background: c.bg, borderRadius: 13, padding: "12px" }}><div style={{ fontSize: 20, fontWeight: 800, color: c.fg, fontVariantNumeric: "tabular-nums" }}>{String(v)}</div><div style={{ fontSize: 11, color: C.muted }}>{l as string}</div></div>)}</div>;

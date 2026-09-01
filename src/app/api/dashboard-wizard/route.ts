@@ -21,7 +21,7 @@ import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { requireMonday, mondayQuery } from "@/lib/monday-server";
 import { fetchBoards } from "@/lib/board-fetch";
-import { profileBoard, applyPreferences, selectLiveWidgets, columnMentioned, findColumnElsewhere } from "@/lib/board-profile";
+import { profileBoard, applyPreferences, selectLiveWidgets, columnMentioned } from "@/lib/board-profile";
 import { readBoardPrefs } from "@/lib/board-prefs";
 import { sanitizeSpec, defaultSpec, ensureMentionedColumns, type DashboardSpec } from "@/lib/dashboard-spec";
 import { rateLimit, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit";
@@ -130,12 +130,14 @@ export async function POST(req: NextRequest) {
     profile
   ).widgets;
 
-  // The honest sentence (המקרה של מיטל: "סטטוס טיפול" התבקש על לוח שאין בו
-  // עמודה כזו): when the purpose names no column ON THIS BOARD, check the
-  // account's other boards — columns only, one cheap query, no items — and if
-  // the column lives elsewhere, SAY SO instead of silently building something
-  // else. A generic purpose that names nothing produces no noise.
+  // The honest sentence + the cross-board offer (בקשת מיטל: "סטטוס טיפול"
+  // לא בלוח הכללי אבל כן בלוח של כל בית ספר — תציג לפי בית ספר): when the
+  // purpose names no column ON THIS BOARD, check the account's other boards —
+  // columns only, one cheap query, no items. One hit → say where it lives.
+  // Two or more → offer the real answer: one dashboard slicing that column
+  // ACROSS all the boards that carry it. A generic purpose produces no noise.
   let note: { text: string; boardId: string; boardName: string } | null = null;
+  let cross: { column: string; boardIds: string[]; boardNames: string[] } | null = null;
   if (purpose && !profile.columns.some((c) => columnMentioned(c.title, purpose))) {
     try {
       const list = await mondayQuery(
@@ -145,16 +147,29 @@ export async function POST(req: NextRequest) {
       const others = ((list?.boards ?? []) as { id: string; name: string; columns?: { title: string }[] }[])
         .filter((b) => String(b.id) !== boardId)
         .map((b) => ({ id: String(b.id), name: b.name, titles: (b.columns ?? []).map((c) => c.title) }));
-      const hit = findColumnElsewhere(purpose, others);
-      if (hit) {
+      const hits = others
+        .map((b) => ({ boardId: b.id, boardName: b.name, column: b.titles.find((t) => columnMentioned(t, purpose)) }))
+        .filter((h): h is { boardId: string; boardName: string; column: string } => Boolean(h.column));
+
+      if (hits.length) {
+        const hit = hits[0];
         note = {
-          text: `בלוח "${profile.boardName}" אין עמודה שמתאימה למה שכתבתם — אבל בלוח "${hit.boardName}" יש עמודת "${hit.column}". ההצעה למטה נבנתה ממה שכן קיים כאן.`,
+          text:
+            hits.length === 1
+              ? `בלוח "${profile.boardName}" אין עמודה שמתאימה למה שכתבתם — אבל בלוח "${hit.boardName}" יש עמודת "${hit.column}". ההצעה למטה נבנתה ממה שכן קיים כאן.`
+              : `בלוח "${profile.boardName}" אין עמודה שמתאימה למה שכתבתם — אבל היא קיימת ב-${hits.length} לוחות אחרים. אפשר להציג אותה מכולם יחד, בפילוח לפי לוח.`,
           boardId: hit.boardId,
           boardName: hit.boardName,
         };
+        if (hits.length >= 2) {
+          // The shortest matched title is the most canonical spelling of the
+          // ask — it re-matches every board's local variant at render time.
+          const column = hits.map((h) => h.column).sort((a, b) => a.length - b.length)[0];
+          cross = { column, boardIds: hits.map((h) => h.boardId), boardNames: hits.map((h) => h.boardName) };
+        }
       }
     } catch { /* the note is a nicety — its absence must not fail the proposal */ }
   }
 
-  return NextResponse.json({ spec, menu, usedAi, boardName: profile.boardName, note });
+  return NextResponse.json({ spec, menu, usedAi, boardName: profile.boardName, note, cross });
 }

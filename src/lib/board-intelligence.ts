@@ -9,7 +9,7 @@ export interface Item { id: string; name: string; values: ItemVal[]; }
 export interface Board { id: string; name: string; columns: Col[]; items: Item[]; }
 
 export interface Widget {
-  kind: "breakdown" | "byOwner" | "timeline" | "numberSummary" | "list" | "attention";
+  kind: "breakdown" | "byOwner" | "timeline" | "numberSummary" | "list" | "attention" | "crossBreakdown";
   title: string;
   source: string;
   data: unknown;
