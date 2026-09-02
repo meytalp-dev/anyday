@@ -122,3 +122,100 @@ describe("defaultSpec — הנפילה-הרכה כשה-AI לא זמין", () => 
     expect(defaultSpec(profile()).title).toContain("תורמים");
   });
 });
+
+/**
+ * חיתוך פתוח (בקשת מיטל 2.9) נכנס לאותה חומה. חיתוך הוא הרכיב היחיד שנושא
+ * מבנה מקונן — עמודת שורה, עמודת חיתוך, מדד ומסננים — ולכן הוא גם המקום היחיד
+ * שבו ל-AI יש ארבע הזדמנויות להמציא עמודה במקום אחת. כל אחת מהן נחסמת כאן.
+ */
+describe("sanitizeSpec — רכיב חיתוך", () => {
+  it("חיתוך תקין שורד במלואו", () => {
+    const s = sanitizeSpec({ title: "ד", widgets: [
+      { kind: "slice", slice: { rowCol: "אחראי", colCol: "סטטוס קשר" } },
+    ] }, profile());
+    expect(s.widgets).toHaveLength(1);
+    expect(s.widgets[0].slice).toEqual({ rowCol: "אחראי", colCol: "סטטוס קשר" });
+  });
+
+  it("עמודת-שורה שאינה קיימת מפילה את הרכיב כולו", () => {
+    const s = sanitizeSpec({ title: "ד", widgets: [
+      { kind: "slice", slice: { rowCol: "עמודת רפאים", colCol: "סטטוס קשר" } },
+    ] }, profile());
+    expect(s.widgets).toHaveLength(0);
+  });
+
+  it("עמודת-חיתוך שאינה קיימת מוסרת, והחיתוך שורד כחד-ממדי", () => {
+    const s = sanitizeSpec({ title: "ד", widgets: [
+      { kind: "slice", slice: { rowCol: "אחראי", colCol: "רפאים" } },
+    ] }, profile());
+    expect(s.widgets).toHaveLength(1);
+    expect(s.widgets[0].slice!.colCol).toBeUndefined();
+  });
+
+  it("מדד על עמודה שאינה מספר מוסר — סכום של סטטוסים הוא שטות", () => {
+    const s = sanitizeSpec({ title: "ד", widgets: [
+      { kind: "slice", slice: { rowCol: "אחראי", measure: { col: "סטטוס קשר", agg: "sum" } } },
+    ] }, profile());
+    expect(s.widgets[0].slice!.measure).toBeUndefined();
+  });
+
+  it("מדד תקין על עמודת מספר נשמר", () => {
+    const s = sanitizeSpec({ title: "ד", widgets: [
+      { kind: "slice", slice: { rowCol: "אחראי", measure: { col: "סכום תרומה", agg: "sum" } } },
+    ] }, profile());
+    expect(s.widgets[0].slice!.measure).toEqual({ col: "סכום תרומה", agg: "sum" });
+  });
+
+  it("פעולת-מדד לא מוכרת נדחית ולא נשמרת כמו שהיא", () => {
+    const s = sanitizeSpec({ title: "ד", widgets: [
+      { kind: "slice", slice: { rowCol: "אחראי", measure: { col: "סכום תרומה", agg: "drop_table" } } },
+    ] }, profile());
+    expect(s.widgets[0].slice!.measure).toBeUndefined();
+  });
+
+  it("מסנן על עמודת רפאים מוסר, ומסנן תקין נשאר", () => {
+    const s = sanitizeSpec({ title: "ד", widgets: [
+      { kind: "slice", slice: { rowCol: "אחראי", filters: [
+        { col: "רפאים", op: "is", value: "x" },
+        { col: "סטטוס קשר", op: "is", value: "פעיל" },
+      ] } },
+    ] }, profile());
+    expect(s.widgets[0].slice!.filters).toEqual([{ col: "סטטוס קשר", op: "is", value: "פעיל" }]);
+  });
+
+  it("אופרטור מסנן זר נדחה", () => {
+    const s = sanitizeSpec({ title: "ד", widgets: [
+      { kind: "slice", slice: { rowCol: "אחראי", filters: [{ col: "סטטוס קשר", op: "eval", value: "x" }] } },
+    ] }, profile());
+    expect(s.widgets[0].slice!.filters ?? []).toHaveLength(0);
+  });
+
+  it("רכיב חיתוך בלי מבנה חיתוך כלל נופל", () => {
+    const s = sanitizeSpec({ title: "ד", widgets: [{ kind: "slice" }] }, profile());
+    expect(s.widgets).toHaveLength(0);
+  });
+
+  it("ציר לוח מותר — חיתוך חוצה-לוחות מאומת מול הלוחות עצמם, לא מול פרופיל אחד", () => {
+    const s = sanitizeSpec({ title: "ד", widgets: [
+      { kind: "slice", slice: { rowCol: "__board__", colCol: "סטטוס קשר" } },
+    ] }, profile());
+    expect(s.widgets).toHaveLength(1);
+    expect(s.widgets[0].slice!.rowCol).toBe("__board__");
+  });
+
+  it("שני חיתוכים זהים מתמזגים לאחד", () => {
+    const s = sanitizeSpec({ title: "ד", widgets: [
+      { kind: "slice", slice: { rowCol: "אחראי", colCol: "סטטוס קשר" } },
+      { kind: "slice", slice: { rowCol: "אחראי", colCol: "סטטוס קשר" } },
+    ] }, profile());
+    expect(s.widgets).toHaveLength(1);
+  });
+
+  it("שני חיתוכים שונים על אותה עמודת-שורה נשמרים שניהם", () => {
+    const s = sanitizeSpec({ title: "ד", widgets: [
+      { kind: "slice", slice: { rowCol: "אחראי", colCol: "סטטוס קשר" } },
+      { kind: "slice", slice: { rowCol: "אחראי", measure: { col: "סכום תרומה", agg: "sum" } } },
+    ] }, profile());
+    expect(s.widgets).toHaveLength(2);
+  });
+});

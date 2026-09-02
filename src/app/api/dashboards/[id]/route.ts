@@ -17,7 +17,6 @@ import { createServiceClient, isSupabaseServerConfigured } from "@/lib/supabase-
 import { requireMonday } from "@/lib/monday-server";
 import { fetchBoards, parseBoardIds, coverage } from "@/lib/board-fetch";
 import { computeSpecWidgets } from "@/lib/dashboard-compute";
-import { crossBreakdown } from "@/lib/cross-board";
 import { statusTones, type Widget } from "@/lib/board-intelligence";
 import type { DashboardSpec } from "@/lib/dashboard-spec";
 import { rateLimit, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit";
@@ -68,17 +67,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   if (!boards.length)
     return noStore({ error: "בורד המקור לא נמצא ב-Monday או שאין אליו הרשאה" }, { status: 404 });
 
+  // One call for every widget kind: single-board widgets read the first board,
+  // cross-board slices read them all, and the old crossBreakdown shape still
+  // renders for dashboards saved before the slice engine.
   const spec = data.spec as DashboardSpec;
-  const widgets: Widget[] = [];
-  for (const w of spec.widgets) {
-    if ((w.kind as string) === "crossBreakdown") {
-      const cw = w.col ? crossBreakdown(boards, w.col) : null;
-      if (cw) widgets.push(cw);
-    }
-  }
-  // Single-board widgets render off the first board — a cross dashboard's spec
-  // simply has none of them, and a regular dashboard has exactly one board.
-  widgets.push(...computeSpecWidgets(boards[0], spec));
+  const widgets: Widget[] = computeSpecWidgets(boards, spec);
 
   const tones: Record<string, string> = {};
   for (const b of boards) Object.assign(tones, statusTones(b));

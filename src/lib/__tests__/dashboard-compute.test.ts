@@ -36,7 +36,7 @@ function donorsBoard(): Board {
 
 describe("computeSpecWidgets — הרכיבים שהאישור קבע, בסדר שהאישור קבע", () => {
   it("כל רכיב ב-spec מחושב מהמנוע ומחזיר נתונים אמיתיים", () => {
-    const ws = computeSpecWidgets(donorsBoard(), {
+    const ws = computeSpecWidgets([donorsBoard()], {
       title: "תורמים",
       widgets: [
         { kind: "breakdown", col: "סטטוס קשר" },
@@ -54,7 +54,7 @@ describe("computeSpecWidgets — הרכיבים שהאישור קבע, בסדר 
   });
 
   it("רכיב שהלוח כבר לא תומך בו (עמודה נמחקה במונדיי) מדולג בשקט, לא קורס", () => {
-    const ws = computeSpecWidgets(donorsBoard(), {
+    const ws = computeSpecWidgets([donorsBoard()], {
       title: "x",
       widgets: [
         { kind: "breakdown", col: "עמודה שנמחקה" },
@@ -62,5 +62,49 @@ describe("computeSpecWidgets — הרכיבים שהאישור קבע, בסדר 
       ],
     });
     expect(ws.map((w) => w.kind)).toEqual(["list"]);
+  });
+});
+
+/**
+ * חיתוך שמור (בקשת מיטל 2.9). שתי דרישות שאסור לוותר עליהן:
+ * (א) דשבורד ששמור מאתמול חייב להמשיך להתרנדר — crossBreakdown הישן חי;
+ * (ב) חיתוך חוצה-לוחות מקבל את כל הלוחות, לא רק את הראשון.
+ */
+describe("computeSpecWidgets — חיתוכים", () => {
+  it("רכיב חיתוך מחושב ומוחזר כ-slice", () => {
+    const ws = computeSpecWidgets([donorsBoard()], {
+      title: "ד", widgets: [{ kind: "slice", slice: { rowCol: "אחראי", colCol: "סטטוס קשר" } }],
+    });
+    expect(ws.map((w) => w.kind)).toEqual(["slice"]);
+  });
+
+  it("חיתוך שהעמודה שלו נמחקה במונדיי מדולג בשקט — הדשבורד לא קורס", () => {
+    const ws = computeSpecWidgets([donorsBoard()], {
+      title: "ד", widgets: [
+        { kind: "slice", slice: { rowCol: "עמודה שנמחקה" } },
+        { kind: "list" },
+      ],
+    });
+    expect(ws.map((w) => w.kind)).toEqual(["list"]);
+  });
+
+  it("crossBreakdown שנשמר לפני המנוע החדש ממשיך להתרנדר", () => {
+    const a = { ...donorsBoard(), id: "a", name: "א" };
+    const b = { ...donorsBoard(), id: "b", name: "ב" };
+    const ws = computeSpecWidgets([a, b], {
+      title: "ד", widgets: [{ kind: "crossBreakdown", col: "סטטוס קשר" } as never],
+    });
+    expect(ws).toHaveLength(1);
+    expect(ws[0].kind).toBe("crossBreakdown");
+  });
+
+  it("חיתוך על ציר הלוח רואה את כל הלוחות, לא רק את הראשון", () => {
+    const a = { ...donorsBoard(), id: "a", name: "א" };
+    const b = { ...donorsBoard(), id: "b", name: "ב" };
+    const ws = computeSpecWidgets([a, b], {
+      title: "ד", widgets: [{ kind: "slice", slice: { rowCol: "__board__", colCol: "סטטוס קשר" } }],
+    });
+    const data = ws[0].data as { rowKeys: { key: string }[] };
+    expect(data.rowKeys.map((k) => k.key)).toEqual(["א", "ב"]);
   });
 });

@@ -24,6 +24,7 @@ import { readBoardPrefs } from "@/lib/board-prefs";
 import { sanitizeSpec } from "@/lib/dashboard-spec";
 import { fetchBoardMeta } from "@/lib/board-fetch";
 import { matchStatusColumn } from "@/lib/cross-board";
+import { BOARD_AXIS, resolveColumn } from "@/lib/slice";
 import { rateLimit, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
@@ -81,18 +82,34 @@ export async function POST(req: NextRequest) {
   };
 
   // ── cross-board dashboard (בקשת מיטל): one column, sliced across boards ──
-  const crossW = (Array.isArray((body.spec as { widgets?: unknown[] })?.widgets)
-    ? ((body.spec as { widgets: { kind?: unknown; col?: unknown }[] }).widgets)
-    : []
-  ).find((w) => w?.kind === "crossBreakdown");
-  if (crossW) {
-    const colQuery = String(crossW.col ?? "").trim().slice(0, 120);
+  //
+  // Two shapes reach here: the original crossBreakdown widget, and a slice
+  // whose row axis is the board itself. Both need the same thing — the column
+  // must really exist on at least two boards — so both are validated against
+  // the boards' real columns before anything is stored.
+  const specWidgets = (Array.isArray((body.spec as { widgets?: unknown[] })?.widgets)
+    ? ((body.spec as { widgets: { kind?: unknown; col?: unknown; slice?: unknown }[] }).widgets)
+    : []);
+  const crossW = specWidgets.find((w) => w?.kind === "crossBreakdown");
+  const crossSlice = specWidgets.find(
+    (w) => w?.kind === "slice" && (w.slice as { rowCol?: unknown })?.rowCol === BOARD_AXIS
+  );
+
+  if (crossW || crossSlice) {
+    const sl = (crossSlice?.slice ?? {}) as { colCol?: unknown; measure?: { col?: unknown } };
+    // What must exist on each board: the cross column, or failing that the
+    // measured column. A pure "count per board" needs neither.
+    const colQuery = String(
+      crossW ? crossW.col ?? "" : sl.colCol ?? sl.measure?.col ?? ""
+    ).trim().slice(0, 120);
     const ids = (Array.isArray(body.boardIds) ? body.boardIds : [])
       .map((x) => String(x).trim())
       .filter((x) => /^\d+$/.test(x))
       .slice(0, 10);
-    if (!colQuery || ids.length < 2)
-      return noStore({ error: "חיתוך חוצה-לוחות דורש עמודה ולפחות שני לוחות" }, { status: 400 });
+    if (ids.length < 2)
+      return noStore({ error: "חיתוך חוצה-לוחות דורש לפחות שני לוחות" }, { status: 400 });
+    if (crossW && !colQuery)
+      return noStore({ error: "חיתוך חוצה-לוחות דורש עמודה" }, { status: 400 });
 
     // Validate against the boards' REAL columns — columns only, no items.
     const guard = await requireMonday();
@@ -103,13 +120,22 @@ export async function POST(req: NextRequest) {
     } catch (e: unknown) {
       return noStore({ error: e instanceof Error ? e.message : "שגיאה בקריאת הלוחות" }, { status: 502 });
     }
-    const matched = meta.filter((b) => matchStatusColumn(b, colQuery));
+    // crossBreakdown only ever meant a status column; a slice may cross any type.
+    const matched = colQuery
+      ? meta.filter((b) => (crossW ? matchStatusColumn(b, colQuery) : resolveColumn(b, colQuery)))
+      : meta;
     if (matched.length < 2)
-      return noStore({ error: `עמודה שמתאימה ל"${colQuery}" נמצאה בפחות משני לוחות` }, { status: 400 });
+      return noStore({ error: colQuery
+        ? `עמודה שמתאימה ל"${colQuery}" נמצאה בפחות משני לוחות`
+        : "פחות משני לוחות נמצאו" }, { status: 400 });
 
     const service = createServiceClient();
     if (!service) return noStore({ error: "אחסון לא זמין" }, { status: 503 });
-    const title = String(body.title ?? "").trim().slice(0, 80) || `"${colQuery}" לפי לוח`;
+    const fallbackTitle = colQuery ? `"${colQuery}" לפי לוח` : "פילוח לפי לוח";
+    const title = String(body.title ?? "").trim().slice(0, 80) || fallbackTitle;
+    const widgets = crossW
+      ? [{ kind: "crossBreakdown", col: colQuery }]
+      : [{ kind: "slice", slice: crossSlice!.slice }];
     const { data, error } = await service
       .from("dashboards")
       .insert({
@@ -118,7 +144,7 @@ export async function POST(req: NextRequest) {
         purpose: String(body.purpose ?? "").slice(0, MAX_PURPOSE),
         source_kind: "monday",
         source_ref: matched.map((b) => b.id).join(","),
-        spec: { title, widgets: [{ kind: "crossBreakdown", col: colQuery }] },
+        spec: { title, widgets },
         created_by: ctx.userId,
       })
       .select("id")
