@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, Suspense } from "react";
+import { useState, useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { getSupabaseBrowser, isSupabaseConfigured } from "@/lib/supabase-browser";
+import { fetchAuthSettings, isProviderEnabled } from "@/lib/auth-providers";
 
 function LoginContent() {
   const searchParams = useSearchParams();
@@ -11,8 +12,21 @@ function LoginContent() {
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Starts hidden and appears only once the project confirms Google is on —
+  // see lib/auth-providers.ts for why a dead button is worse than no button.
+  const [googleOn, setGoogleOn] = useState(false);
 
   const configured = isSupabaseConfigured();
+
+  useEffect(() => {
+    let alive = true;
+    fetchAuthSettings().then((s) => {
+      if (alive) setGoogleOn(isProviderEnabled(s, "google"));
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   async function signInWithGoogle() {
     const supabase = getSupabaseBrowser();
@@ -91,6 +105,7 @@ function LoginContent() {
             היכנסו כדי לבנות ולנהל את מערכות ה-Monday של הארגון שלכם
           </p>
 
+          {googleOn && (<>
           <button
             onClick={signInWithGoogle}
             disabled={!configured}
@@ -111,11 +126,14 @@ function LoginContent() {
             התחברות עם Google
           </button>
 
+          {/* The "or by email" divider only separates two things. With Google
+              hidden there is nothing to separate, so it goes with the button. */}
           <div style={{ marginTop: 20, display: "flex", alignItems: "center", gap: 12 }}>
             <div style={{ flex: 1, height: 1, background: "var(--color-border)" }} />
             <span style={{ fontSize: 12, color: "var(--color-muted)" }}>או במייל</span>
             <div style={{ flex: 1, height: 1, background: "var(--color-border)" }} />
           </div>
+          </>)}
 
           {sent ? (
             <p style={{ marginTop: 20, fontSize: 14, color: "var(--color-green)", fontWeight: 600, lineHeight: 1.6 }}>
