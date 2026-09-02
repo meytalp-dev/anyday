@@ -31,6 +31,9 @@ import { sliceWidget, type SliceSpec } from "@/lib/slice";
 import { bucketOf } from "@/lib/board-profile";
 import { SliceBuilder, describe as describeSlice, type SliceCol } from "@/components/live/SliceBuilder";
 import { SliceBody, type SliceData } from "@/components/live/SliceTable";
+import { KpiTile, ChartCard } from "@/components/live/LiveWidgets";
+import { buildLiveBoard } from "@/lib/live-board";
+import { profileBoard, type BoardPrefs } from "@/lib/board-profile";
 
 /* ── the palette of "לוח חי", so a sheet dashboard and a board dashboard are
       recognisably the same product ── */
@@ -48,13 +51,6 @@ const PALETTE = [
   { fg: C.amber, bg: C.amberL }, { fg: C.sky, bg: C.skyL }, { fg: C.lime, bg: C.limeL },
 ];
 const pick = (i: number) => PALETTE[i % PALETTE.length];
-const TONE_STYLE: Record<string, { fg: string; bg: string }> = {
-  done: { fg: "#0B8F76", bg: C.tealL },
-  risk: { fg: "#D63A5C", bg: C.coralL },
-  progress: { fg: "#C77A00", bg: C.amberL },
-  neutral: { fg: C.muted, bg: "#F0EFF6" },
-};
-const toneStyle = (t?: string) => TONE_STYLE[t || "neutral"] || TONE_STYLE.neutral;
 
 const FONT = "Rubik, Assistant, Heebo, system-ui, sans-serif";
 const card = { background: C.panel, border: `1px solid ${C.line}`, borderRadius: 18, boxShadow: "0 4px 16px -8px rgba(60,50,120,.14)" } as const;
@@ -443,24 +439,30 @@ type LiveInfo = { busy: boolean; fetchedAt: Date | null; err: string | null; onR
 
 function DashStage({ plan, onBack, onReset, live }: { plan: SheetPlan; onBack: () => void; onReset: () => void; live?: LiveInfo }) {
   const board = useMemo(() => planToBoard(plan), [plan]);
-  const kpis = useMemo(() => BI.headlineKpis(board), [board]);
-  const tones = useMemo(() => BI.statusTones(board), [board]);
 
-  /* The engine is asked what this board CAN show, and then asked to compute
-     exactly those things. Nothing here decides what is interesting. */
-  const widgets = useMemo(() => {
-    const out: BI.Widget[] = [];
-    for (const cap of BI.capabilities(board)) {
-      if (cap.kind === "breakdown") { const w = BI.breakdown(board, cap.col); if (w) out.push(w); }
-      else if (cap.kind === "numberSummary") { const w = BI.numberSummary(board, cap.col); if (w) out.push(w); }
-      else if (cap.kind === "attention") { const w = BI.attention(board); if ((w.data as { count: number }).count > 0) out.push(w); }
-    }
-    if (!out.length) out.push(BI.list(board, 24));
-    return out.slice(0, 12);
-  }, [board]);
+  /* The same computation a connected Monday board gets (בקשת מיטל 2.9), run
+     here in the tab: the profile ranks the columns, the relevance layer drops
+     what tells no story, and the user's own ⭐/✕ and purpose sentence override
+     both. The only difference from /app is where the preferences live — there
+     a database, here this tab. Closing it forgets them, exactly like the file. */
+  const [prefs, setPrefs] = useState<BoardPrefs>({});
+  const { kpis, charts, more, attention } = useMemo(
+    () => buildLiveBoard([{ board, prefs }]), [board, prefs]
+  );
 
-  const hasAttention = widgets.some((w) => w.kind === "attention");
   const hasTimeline = useMemo(() => board.items.length > 0 && BI.timeline(board, board.items[0]) !== null, [board]);
+
+  const toggleKey = (field: "pinnedWidgets" | "hiddenWidgets", key: string) =>
+    setPrefs((p) => {
+      const cur = new Set(p[field] ?? []);
+      if (cur.has(key)) cur.delete(key); else cur.add(key);
+      // Pinning something that was hidden un-hides it: the two marks are
+      // opposite intentions, and holding both would be a contradiction.
+      const other = field === "pinnedWidgets" ? "hiddenWidgets" : "pinnedWidgets";
+      const otherSet = new Set(p[other] ?? []);
+      otherSet.delete(key);
+      return { ...p, [field]: [...cur], [other]: [...otherSet] };
+    });
 
   return (
     <div>
@@ -500,17 +502,23 @@ function DashStage({ plan, onBack, onReset, live }: { plan: SheetPlan; onBack: (
         {kpis.map((k, i) => <KpiTile key={i} k={k} i={i} />)}
       </div>
 
-      {hasAttention && (
-        <div style={{ ...card, borderColor: `${C.amber}55`, background: C.amberL, padding: "11px 15px", marginBottom: 14, fontSize: 12.5, lineHeight: 1.7 }}>
-          גיליון לא נושא צבעים כמו לוח Monday, ולכן הסימון של &quot;דורשים תשומת לב&quot; נשען על הטקסט שבתא בלבד. במערכת מחוברת הסימון מגיע מהצבע שהלוח עצמו נתן לתווית.
-        </div>
-      )}
+      {attention.count > 0 && <AttentionBanner attention={attention} />}
+
+      <GoalCard board={board} prefs={prefs} setPrefs={setPrefs} />
 
       <SliceSection board={board} />
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(300px,1fr))", gap: 12 }}>
-        {widgets.map((w, i) => <ChartCard key={`${w.kind}-${w.title}-${i}`} w={w} i={i} tones={tones} />)}
+        {charts.map((w, i) => (
+          <ChartCard
+            key={w.key} w={w} i={i} pinned={w.pinned}
+            onPin={() => toggleKey("pinnedWidgets", w.key)}
+            onHide={() => toggleKey("hiddenWidgets", w.key)}
+          />
+        ))}
       </div>
+
+      {more.length > 0 && <MoreRow more={more} onRestore={(k) => toggleKey("pinnedWidgets", k)} />}
 
       {hasTimeline && <Records board={board} />}
     </div>
@@ -580,6 +588,130 @@ function SliceSection({ board }: { board: BI.Board }) {
   );
 }
 
+/* Who needs looking at, and the honest caveat about WHY they were picked.
+   On a Monday board the choice comes from the colour the board gave a label;
+   a spreadsheet carries no colours, so here it can only read the text — and
+   the banner says so rather than letting the number look equally certain. */
+function AttentionBanner({ attention }: { attention: { count: number; items: { name: string; why: string }[] } }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ ...card, borderColor: `${C.amber}55`, background: C.amberL, padding: "11px 15px", marginBottom: 14 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 15 }}>▲</span>
+        <b style={{ fontSize: 13.5 }}>{attention.count} דורשים תשומת לב</b>
+        <button
+          onClick={() => setOpen(!open)}
+          style={{ ...btnGhost, padding: "4px 11px", fontSize: 12, borderColor: `${C.amber}88`, color: "#8a5a00" }}
+        >{open ? "▾ הסתרה" : "הצגת השמות"}</button>
+      </div>
+      {open && (
+        <div style={{ marginTop: 9, display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(190px,1fr))", gap: 4 }}>
+          {attention.items.map((it, i) => (
+            <div key={i} style={{ fontSize: 12, lineHeight: 1.6 }}>
+              <b>{it.name}</b> <span style={{ color: C.muted }}>· {it.why}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      <div style={{ fontSize: 11.5, color: C.muted, lineHeight: 1.7, marginTop: 8, paddingTop: 8, borderTop: `1px dashed ${C.amber}55` }}>
+        גיליון לא נושא צבעים כמו לוח Monday, ולכן הסימון נשען על הטקסט שבתא בלבד. במערכת מחוברת הוא מגיע מהצבע שהלוח עצמו נתן לתווית.
+      </div>
+    </div>
+  );
+}
+
+/* "מה חשוב לך" — the purpose sentence and the column marks, which reorder the
+   board immediately (משוב מיטל: כל שדה קלט נשפט לפי אם הלוח הגיב מיד). On a
+   connected board these are saved per organisation; here they live in the tab,
+   because a sheet has no account to save them against. */
+function GoalCard({ board, prefs, setPrefs }: {
+  board: BI.Board; prefs: BoardPrefs; setPrefs: (f: (p: BoardPrefs) => BoardPrefs) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const cols = useMemo(
+    () => profileBoard(board).columns.filter((c) => c.bucket !== "meta" && c.score > 0),
+    [board]
+  );
+  const marked = new Set(prefs.importantColumns ?? []);
+  if (!cols.length) return null;
+
+  return (
+    <div style={{ ...card, padding: "12px 15px", marginBottom: 14 }}>
+      <button
+        onClick={() => setOpen(!open)}
+        style={{ display: "flex", alignItems: "center", gap: 9, width: "100%", background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: FONT, textAlign: "right", color: C.ink }}
+      >
+        <span style={{ fontSize: 15 }}>🎯</span>
+        <span style={{ fontSize: 13, fontWeight: 800, flex: 1 }}>מה חשוב לכם לראות</span>
+        <span style={{ fontSize: 11.5, color: C.muted }}>
+          {marked.size ? `${marked.size} עמודות מסומנות` : "הלוח מסודר לפי מה שהמנוע מצא"}
+        </span>
+        <span style={{ color: C.muted, fontSize: 12 }}>{open ? "▾" : "◂"}</span>
+      </button>
+
+      {open && (
+        <div style={{ marginTop: 11 }}>
+          <div style={{ fontSize: 11.5, fontWeight: 700, marginBottom: 5 }}>במשפט אחד — למה הגיליון הזה?</div>
+          <input
+            value={prefs.goalsText ?? ""}
+            onChange={(e) => setPrefs((p) => ({ ...p, goalsText: e.target.value.slice(0, 500) }))}
+            placeholder='למשל: "לעקוב אחרי סטטוס טיפול לפי בית ספר"'
+            style={{ width: "100%", boxSizing: "border-box", padding: "8px 11px", borderRadius: 10, border: `1.5px solid ${C.line}`, background: "#FAF9FE", fontSize: 12.5, fontFamily: FONT, color: C.ink, outline: "none" }}
+          />
+          <div style={{ fontSize: 11, color: C.muted, margin: "6px 0 11px", lineHeight: 1.6 }}>
+            עמודה שתנקבו בשמה כאן עולה לראש הלוח מיד, גם אם המנוע חשב שהיא לא מעניינת.
+          </div>
+
+          <div style={{ fontSize: 11.5, fontWeight: 700, marginBottom: 6 }}>או סמנו ישירות</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {cols.map((c) => {
+              const on = marked.has(c.id);
+              return (
+                <button
+                  key={c.id}
+                  onClick={() => setPrefs((p) => {
+                    const cur = new Set(p.importantColumns ?? []);
+                    if (cur.has(c.id)) cur.delete(c.id); else cur.add(c.id);
+                    return { ...p, importantColumns: [...cur] };
+                  })}
+                  aria-pressed={on}
+                  style={{ fontSize: 12, fontWeight: on ? 700 : 500, padding: "5px 11px", borderRadius: 999, cursor: "pointer", fontFamily: FONT, border: `1.5px solid ${on ? C.grape : C.line}`, background: on ? C.grapeL : C.panel, color: on ? C.grape : C.muted }}
+                >{on ? "✓ " : ""}{c.title}</button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* Nothing is thrown away, only set aside: what the relevance layer dropped —
+   and what the user hid — sits here, one click from coming back. */
+function MoreRow({ more, onRestore }: { more: { key: string; label: string; hiddenByUser: boolean }[]; onRestore: (key: string) => void }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ marginTop: 14 }}>
+      <button
+        onClick={() => setOpen(!open)}
+        style={{ ...btnGhost, fontSize: 12.5 }}
+      >{open ? "▾ הסתרת עוד רכיבים" : `עוד ${plural(more.length, "רכיב אחד שהלוח יודע להציג", "רכיבים שהלוח יודע להציג")}`}</button>
+      {open && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 9 }}>
+          {more.map((m) => (
+            <button
+              key={m.key}
+              onClick={() => onRestore(m.key)}
+              title={m.hiddenByUser ? "הסתרתם את זה — להחזרה" : "הושמט כי לא נמצא בו אות — להצגה בכל זאת"}
+              style={{ fontSize: 12, padding: "6px 12px", borderRadius: 999, cursor: "pointer", fontFamily: FONT, border: `1.5px dashed ${C.line}`, background: C.panel, color: C.muted }}
+            >+ {m.label}{m.hiddenByUser ? " (הוסתר)" : ""}</button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ViewOnlyBanner({ live }: { live: boolean }) {
   return (
     <div style={{ ...card, padding: "13px 17px", marginBottom: 16, display: "flex", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
@@ -597,115 +729,6 @@ function ViewOnlyBanner({ live }: { live: boolean }) {
   );
 }
 
-function KpiTile({ k, i }: { k: { icon: string; n: number; label: string; tone: string }; i: number }) {
-  const c = k.tone === "rose" ? { fg: C.coral, bg: C.coralL }
-    : k.tone === "mint" ? { fg: C.teal, bg: C.tealL }
-    : k.tone === "brand" ? { fg: C.grape, bg: C.grapeL } : pick(i + 3);
-  return (
-    <div style={{ ...card, padding: "16px 18px", position: "relative", overflow: "hidden" }}>
-      <div style={{ position: "absolute", top: -14, insetInlineStart: -14, width: 60, height: 60, borderRadius: "50%", background: c.bg, opacity: .6 }} />
-      <div style={{ position: "relative" }}>
-        <div style={{ width: 40, height: 40, borderRadius: 13, background: c.bg, color: c.fg, display: "grid", placeItems: "center", fontSize: 20, marginBottom: 10 }}>{k.icon}</div>
-        <div style={{ fontSize: 29, fontWeight: 800, letterSpacing: "-.02em", fontVariantNumeric: "tabular-nums", color: c.fg }}>{k.n.toLocaleString("he-IL")}</div>
-        <div style={{ fontSize: 12.5, color: C.muted, fontWeight: 600 }}>{k.label}</div>
-      </div>
-    </div>
-  );
-}
-
-function ChartCard({ w, i, tones }: { w: BI.Widget; i: number; tones: BI.ToneMap }) {
-  const c = pick(i);
-  return (
-    <div style={{ ...card, padding: "16px 18px" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-        <span style={{ width: 8, height: 22, borderRadius: 4, background: c.fg }} />
-        <div style={{ fontSize: 14, fontWeight: 800 }}>{w.title}</div>
-      </div>
-      <ChartBody w={w} c={c} tones={tones} />
-      <div style={{ marginTop: 12, fontSize: 10.5, color: "#B4B2C6", borderTop: `1px dashed ${C.line}`, paddingTop: 8 }}>🔎 {w.source}</div>
-    </div>
-  );
-}
-
-function ChartBody({ w, c, tones }: { w: BI.Widget; c: { fg: string; bg: string }; tones: BI.ToneMap }) {
-  const d = w.data as Record<string, unknown>;
-
-  if (w.kind === "breakdown") {
-    const rows = (d.rows as { label: string; n: number; tone?: string }[]) || [];
-    const max = Math.max(...rows.map((r) => r.n), 1);
-    return (
-      <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-        {rows.slice(0, 8).map((r) => {
-          const sc = toneStyle(r.tone || tones[r.label]);
-          return (
-            <div key={r.label} style={{ display: "grid", gap: 4 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12.5 }}>
-                <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 200 }}>{r.label}</span>
-                <b style={{ fontVariantNumeric: "tabular-nums", color: sc.fg }}>{r.n}</b>
-              </div>
-              <div style={{ height: 9, borderRadius: 999, background: "#F2F1F9", overflow: "hidden" }}>
-                <div style={{ width: `${(r.n / max) * 100}%`, height: "100%", background: sc.fg, borderRadius: 999 }} />
-              </div>
-            </div>
-          );
-        })}
-        {rows.length > 8 && <div style={{ fontSize: 11.5, color: C.muted }}>ועוד {rows.length - 8} ערכים</div>}
-      </div>
-    );
-  }
-
-  if (w.kind === "numberSummary") {
-    const cells: [string, unknown][] = [["סה״כ", d.sum], ["ממוצע", d.avg], ["מקסימום", d.max]];
-    return (
-      <div>
-        <div style={{ display: "flex", gap: 10 }}>
-          {cells.map(([l, v]) => (
-            <div key={l} style={{ flex: 1, background: c.bg, borderRadius: 13, padding: 12 }}>
-              <div style={{ fontSize: 19, fontWeight: 800, color: c.fg, fontVariantNumeric: "tabular-nums" }}>{Number(v).toLocaleString("he-IL")}</div>
-              <div style={{ fontSize: 11, color: C.muted }}>{l}</div>
-            </div>
-          ))}
-        </div>
-        <div style={{ marginTop: 8, fontSize: 11, color: C.muted }}>מבוסס על {String(d.count)} תאים שיש בהם מספר.</div>
-      </div>
-    );
-  }
-
-  if (w.kind === "attention") {
-    const items = (d.items as { name: string; why: string }[]) || [];
-    return (
-      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-        {items.slice(0, 10).map((it, j) => (
-          <div key={j} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12.5, background: C.coralL, borderRadius: 10, padding: "7px 11px" }}>
-            <span style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.name}</span>
-            <span style={{ color: "#D63A5C", whiteSpace: "nowrap" }}>{it.why}</span>
-          </div>
-        ))}
-        {items.length > 10 && <div style={{ fontSize: 11.5, color: C.muted }}>ועוד {items.length - 10}</div>}
-      </div>
-    );
-  }
-
-  if (w.kind === "list") {
-    const items = (d.items as string[]) || [];
-    return (
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-        {items.map((n, j) => (
-          <span key={j} style={{ fontSize: 12, padding: "5px 11px", background: pick(j).bg, color: pick(j).fg, borderRadius: 999, fontWeight: 600 }}>{n}</span>
-        ))}
-        {(d.total as number) > items.length && <span style={{ fontSize: 11.5, color: C.muted }}>ועוד {(d.total as number) - items.length}</span>}
-      </div>
-    );
-  }
-
-  return null;
-}
-
-/**
- * One record's own story. A date column is a stage, and the order comes from the
- * dates the record actually carries — all of that is the engine's `timeline`,
- * computed here without a single change to it.
- */
 function Records({ board }: { board: BI.Board }) {
   const [open, setOpen] = useState<string | null>(null);
   const item = board.items.find((x) => x.id === open) || null;
