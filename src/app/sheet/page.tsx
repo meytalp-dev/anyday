@@ -23,7 +23,7 @@
  * that ACTS is Monday, connected.
  */
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import * as BI from "@/lib/board-intelligence";
 import { readSheet, planToBoard, type SheetPlan, type SheetType } from "@/lib/sheet-to-board";
@@ -75,7 +75,42 @@ type Stage = "drop" | "confirm" | "dash";
 
 /** Where the current plan came from — it decides the privacy pill, and whether
  *  a refetch is even possible. */
-type Source = { kind: "file" } | { kind: "link"; url: string };
+type Source = { kind: "file" } | { kind: "link"; url: string } | { kind: "demo"; key: string };
+
+/**
+ * Ready-made demos, opened by `/sheet?demo=<key>` — one link that lands a
+ * stranger on a finished dashboard with nothing to upload, no account and no
+ * Monday. Built for showing the product to someone who has no data of their
+ * own yet.
+ *
+ * Each file is an ANONYMISED TWIN of a real board: the same columns, the same
+ * categories in the same proportions, the same share of blanks — and not one
+ * real person. Identifier columns (ת"ז, טלפון) are not reproduced at all.
+ *
+ * A fixed registry, never a path from the URL: `?demo=` chooses one of these
+ * and can express nothing else.
+ */
+const DEMOS: Record<string, { file: string; title: string }> = {
+  school: { file: "/demo/alumni-school.csv", title: "מאגר בוגרים — בית ספר (הדגמה)" },
+  alumni: { file: "/demo/alumni-all.csv", title: "כלל הבוגרים (הדגמה)" },
+};
+
+/** Resolve `?demo=` and read the file. Returns null when no demo was asked for. */
+async function loadDemo(): Promise<{ plan?: SheetPlan; key?: string; err?: string } | null> {
+  const key = new URLSearchParams(window.location.search).get("demo");
+  if (!key) return null;
+  const demo = DEMOS[key];
+  if (!demo) return { err: "ההדגמה המבוקשת לא קיימת." };
+  try {
+    const res = await fetch(demo.file);
+    if (!res.ok) return { err: "לא הצלחתי לטעון את נתוני ההדגמה." };
+    const plan = readSheet(demo.title, await res.text());
+    if (plan.empty) return { err: "נתוני ההדגמה ריקים." };
+    return { plan, key };
+  } catch {
+    return { err: "לא הצלחתי לטעון את נתוני ההדגמה." };
+  }
+}
 
 export default function SheetPage() {
   const [plan, setPlan] = useState<SheetPlan | null>(null);
@@ -95,6 +130,19 @@ export default function SheetPage() {
   );
 
   function reset() { setPlan(null); setTypes({}); setStage("drop"); setErr(null); setSource({ kind: "file" }); setBusy(false); setFetchedAt(null); }
+
+  /* A `?demo=` link opens straight on the dashboard: the whole point is that
+     the visitor does nothing at all. Read from window rather than
+     useSearchParams so this page stays statically prerenderable. */
+  useEffect(() => {
+    let alive = true;
+    loadDemo().then((r) => {
+      if (!alive || !r) return;
+      if (r.err) { setErr(r.err); return; }
+      setPlan(r.plan!); setTypes({}); setSource({ kind: "demo", key: r.key! }); setStage("dash");
+    });
+    return () => { alive = false; };
+  }, []);
 
   /** The link path's single network call: our own /api/sheets brings the CSV,
    *  and the SAME `readSheet` that reads a dropped file reads it here. */
@@ -145,7 +193,7 @@ export default function SheetPage() {
 
   return (
     <div dir="rtl" style={{ minHeight: "100vh", background: C.bg, color: C.ink, fontFamily: FONT }}>
-      <TopBar onReset={plan ? reset : undefined} fileName={plan?.fileName} live={source.kind === "link"} />
+      <TopBar onReset={plan ? reset : undefined} fileName={plan?.fileName} live={source.kind === "link"} demo={source.kind === "demo"} />
       <main style={{ maxWidth: 1080, margin: "0 auto", padding: "26px 20px 70px" }}>
         {stage === "drop" && <DropStage onFile={accept} onLink={fromLink} busy={busy} err={err} />}
         {stage === "confirm" && finalPlan && (
@@ -167,7 +215,7 @@ export default function SheetPage() {
   );
 }
 
-function TopBar({ onReset, fileName, live }: { onReset?: () => void; fileName?: string; live?: boolean }) {
+function TopBar({ onReset, fileName, live, demo }: { onReset?: () => void; fileName?: string; live?: boolean; demo?: boolean }) {
   return (
     <header style={{ height: 58, background: C.panel, borderBottom: `1px solid ${C.line}`, display: "flex", alignItems: "center", gap: 14, padding: "0 22px", position: "sticky", top: 0, zIndex: 20 }}>
       <Link href="/" style={{ display: "flex", alignItems: "center", gap: 9, textDecoration: "none", color: C.ink }}>
@@ -179,7 +227,7 @@ function TopBar({ onReset, fileName, live }: { onReset?: () => void; fileName?: 
       </span>
       {fileName && <span style={{ fontSize: 12, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 260 }}>{fileName}</span>}
       <div style={{ marginInlineStart: "auto", display: "flex", gap: 8, alignItems: "center" }}>
-        <PrivacyPill live={live} />
+        <PrivacyPill live={live} demo={demo} />
         {onReset && <button onClick={onReset} style={btnGhost}>מקור אחר</button>}
       </div>
     </header>
@@ -188,7 +236,16 @@ function TopBar({ onReset, fileName, live }: { onReset?: () => void; fileName?: 
 
 /** The promise, said in the chrome and not only in the small print — and said
  *  per source, because the two paths genuinely differ. */
-function PrivacyPill({ live }: { live?: boolean }) {
+function PrivacyPill({ live, demo }: { live?: boolean; demo?: boolean }) {
+  // A demo must never be mistaken for somebody's real data. It says so in the
+  // chrome, in its own colour, before anyone reads a single number.
+  if (demo) {
+    return (
+      <span style={{ fontSize: 11.5, fontWeight: 700, color: "#9A5B00", background: C.amberL, borderRadius: 999, padding: "5px 11px", whiteSpace: "nowrap" }}>
+        נתוני הדגמה — אנשים בדויים
+      </span>
+    );
+  }
   return (
     <span style={{ fontSize: 11.5, fontWeight: 700, color: "#0B8F76", background: C.tealL, borderRadius: 999, padding: "5px 11px", whiteSpace: "nowrap" }}>
       {live ? "🔒 לא נשמר אצלנו דבר" : "🔒 הקובץ נשאר בדפדפן שלך"}
