@@ -14,10 +14,10 @@ import { parseDelimited, headRow, normKey, looksLikeHeader } from "@/lib/sheet-t
 import { useUser } from "@/lib/use-user";
 import { examplePurposes, type BoardProfile } from "@/lib/board-profile";
 import { BOARD_AXIS, type SliceSpec } from "@/lib/slice";
-import { SliceBuilder, describe as describeSlice, type SliceCol } from "./SliceBuilder";
-import { SliceBody, type SliceData } from "./SliceTable";
+import { SliceBuilder, describe as describeSlice, type SliceCol } from "@/components/live/SliceBuilder";
+import { SliceBody, type SliceData } from "@/components/live/SliceTable";
 
-import { C, PALETTE, pick, TONE_STYLE, toneStyle, type Tone, type ToneMap } from "./theme";
+import { C, PALETTE, pick, TONE_STYLE, toneStyle, type Tone, type ToneMap } from "@/components/live/theme";
 
 /**
  * The ONE breakpoint of /app: below 900px the two-column shell folds to one.

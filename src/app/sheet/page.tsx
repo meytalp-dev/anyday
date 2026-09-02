@@ -27,6 +27,10 @@ import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import * as BI from "@/lib/board-intelligence";
 import { readSheet, planToBoard, type SheetPlan, type SheetType } from "@/lib/sheet-to-board";
+import { sliceWidget, type SliceSpec } from "@/lib/slice";
+import { bucketOf } from "@/lib/board-profile";
+import { SliceBuilder, describe as describeSlice, type SliceCol } from "@/components/live/SliceBuilder";
+import { SliceBody, type SliceData } from "@/components/live/SliceTable";
 
 /* ── the palette of "לוח חי", so a sheet dashboard and a board dashboard are
       recognisably the same product ── */
@@ -445,11 +449,76 @@ function DashStage({ plan, onBack, onReset, live }: { plan: SheetPlan; onBack: (
         </div>
       )}
 
+      <SliceSection board={board} />
+
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(300px,1fr))", gap: 12 }}>
         {widgets.map((w, i) => <ChartCard key={`${w.kind}-${w.title}-${i}`} w={w} i={i} tones={tones} />)}
       </div>
 
       {hasTimeline && <Records board={board} />}
+    </div>
+  );
+}
+
+/* ── slices, on a sheet ────────────────────────────────────────────────────
+   The engine is pure over `Board`, and `planToBoard` produces exactly that
+   shape — so a sheet gets the same open slicing a connected Monday board gets,
+   with no engine code of its own. The only difference is where it runs: here
+   the slice is computed IN THE TAB, like everything else on this screen, so a
+   spreadsheet still never leaves the browser.
+
+   No account, no wizard, no AI: the builder IS the whole interface. */
+function SliceSection({ board }: { board: BI.Board }) {
+  const [slices, setSlices] = useState<SliceSpec[]>([]);
+  const [building, setBuilding] = useState(false);
+
+  const cols: SliceCol[] = useMemo(
+    () => board.columns.map((c) => ({ title: c.title, type: bucketOf(c.type) })).filter((c) => c.type !== "meta"),
+    [board]
+  );
+
+  // A slice whose column vanished (the user corrected a type, or refetched a
+  // changed sheet) is dropped from the view, not left rendering a stale answer.
+  const built = useMemo(
+    () => slices.map((sl) => ({ sl, w: sliceWidget([board], sl) })).filter((x) => x.w),
+    [slices, board]
+  );
+
+  if (!cols.length) return null;
+
+  return (
+    <div style={{ margin: "0 0 14px" }}>
+      {building ? (
+        <div style={{ marginBottom: built.length ? 12 : 0 }}>
+          <SliceBuilder cols={cols} onAdd={(sl) => { setSlices([...slices, sl]); setBuilding(false); }} />
+          <button onClick={() => setBuilding(false)} style={{ ...btnGhost, marginTop: 8 }}>ביטול</button>
+        </div>
+      ) : (
+        <button
+          onClick={() => setBuilding(true)}
+          style={{ ...card, width: "100%", padding: "11px 15px", border: `1.5px dashed ${C.grape}55`, background: "#fff", color: C.grape, fontSize: 13, fontWeight: 700, fontFamily: "inherit", cursor: "pointer", textAlign: "right", marginBottom: built.length ? 12 : 0 }}
+        >✂️ בניית חיתוך משלכם — כל עמודה לפי כל עמודה</button>
+      )}
+
+      {built.length > 0 && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(300px,1fr))", gap: 12 }}>
+          {built.map(({ sl, w }, i) => (
+            <div key={`${describeSlice(sl)}-${i}`} style={{ ...card, padding: "16px 18px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                <span style={{ width: 8, height: 22, borderRadius: 4, background: C.grape }} />
+                <div style={{ fontSize: 14, fontWeight: 800, flex: 1 }}>{w!.title}</div>
+                <button
+                  onClick={() => setSlices(slices.filter((x) => x !== sl))}
+                  aria-label={`הסרת ${w!.title}`}
+                  style={{ border: "none", background: C.bg, borderRadius: 8, width: 26, height: 26, cursor: "pointer", color: C.muted, fontSize: 12 }}
+                >✕</button>
+              </div>
+              <SliceBody d={w!.data as unknown as SliceData} />
+              <div style={{ marginTop: 12, fontSize: 10.5, color: "#B4B2C6", borderTop: `1px dashed ${C.line}`, paddingTop: 8 }}>✂️ {describeSlice(sl)}</div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
