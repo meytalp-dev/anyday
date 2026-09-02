@@ -51,7 +51,9 @@ export interface BoardProfile {
 // say nothing about what THIS organisation tracks, so they never rank.
 const META_TYPES = ["creation_log", "last_updated", "subtasks", "button", "name"];
 
-function bucketOf(type: string): ColumnBucket {
+/** Monday/sheet column type -> semantic bucket. Exported so the slice engine
+ *  groups by the SAME type rules the profile ranks by — one source of truth. */
+export function bucketOf(type: string): ColumnBucket {
   if (META_TYPES.includes(type)) return "meta";
   if (["status", "color", "dropdown"].includes(type)) return "status";
   if (["date", "timeline"].includes(type)) return "date";

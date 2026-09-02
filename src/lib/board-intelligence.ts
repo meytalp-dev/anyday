@@ -9,7 +9,7 @@ export interface Item { id: string; name: string; values: ItemVal[]; }
 export interface Board { id: string; name: string; columns: Col[]; items: Item[]; }
 
 export interface Widget {
-  kind: "breakdown" | "byOwner" | "timeline" | "numberSummary" | "list" | "attention" | "crossBreakdown";
+  kind: "breakdown" | "byOwner" | "timeline" | "numberSummary" | "list" | "attention" | "crossBreakdown" | "slice";
   title: string;
   source: string;
   data: unknown;
@@ -164,7 +164,8 @@ export function statusTones(board: Board): ToneMap {
   return out;
 }
 
-function valueOf(item: Item, col: Col): string {
+/** One item's text for one column. Exported for the slice engine. */
+export function valueOf(item: Item, col: Col): string {
   return item.values.find((v) => v.colId === col.id || v.title === col.title)?.text || "";
 }
 
