@@ -272,7 +272,6 @@ function dateBuckets(col: Col, raws: string[]): Buckets {
   void col;
   const stamps = raws.map((r) => parseBoardDate(r)?.at ?? null);
   const real = stamps.filter((s): s is number => s !== null);
-  const hasEmpty = stamps.some((s) => s === null);
 
   // The grain follows the real span: a year of data is months; a decade is years.
   let grain: DateGrain = "month";

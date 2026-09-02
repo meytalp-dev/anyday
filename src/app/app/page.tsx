@@ -13,35 +13,11 @@ import type { MondayBoard, MondayItem } from "@/types";
 import { parseDelimited, headRow, normKey, looksLikeHeader } from "@/lib/sheet-to-board";
 import { useUser } from "@/lib/use-user";
 import { examplePurposes, type BoardProfile } from "@/lib/board-profile";
+import { BOARD_AXIS, type SliceSpec } from "@/lib/slice";
+import { SliceBuilder, describe as describeSlice, type SliceCol } from "./SliceBuilder";
+import { SliceBody, type SliceData } from "./SliceTable";
 
-/* ===== "לוח חי" palette — colorful, energetic, NOT flat purple ===== */
-const C = {
-  bg: "#F4F3FB", panel: "#FFFFFF", ink: "#1B1830", muted: "#7C7A93",
-  grape: "#6C4CF1", grapeL: "#EEEBFE",
-  coral: "#FF6B8A", coralL: "#FFEBF0",
-  teal: "#12C7A8", tealL: "#DFF7F2",
-  amber: "#FFAE34", amberL: "#FFF1DC",
-  sky: "#3E9BFF", skyL: "#E4F1FF",
-  lime: "#84D65A", limeL: "#ECF9E1",
-};
-const PALETTE = [
-  { fg: C.grape, bg: C.grapeL }, { fg: C.coral, bg: C.coralL }, { fg: C.teal, bg: C.tealL },
-  { fg: C.amber, bg: C.amberL }, { fg: C.sky, bg: C.skyL }, { fg: C.lime, bg: C.limeL },
-];
-const pick = (i: number) => PALETTE[i % PALETTE.length];
-/* A status value is painted by its TONE, which arrives from the server. The
-   server derives that tone from the colour the Monday board itself gave the
-   label (see board-intelligence), so this screen recognises no word at all -
-   a board in Hebrew, Arabic or English colours identically. */
-type Tone = "risk" | "progress" | "done" | "neutral";
-type ToneMap = Record<string, string>;
-const TONE_STYLE: Record<Tone, { fg: string; bg: string }> = {
-  done: { fg: "#0B8F76", bg: C.tealL },
-  risk: { fg: "#D63A5C", bg: C.coralL },
-  progress: { fg: "#C77A00", bg: C.amberL },
-  neutral: { fg: C.muted, bg: "#F0EFF6" },
-};
-const toneStyle = (t?: string) => TONE_STYLE[t as Tone] || TONE_STYLE.neutral;
+import { C, PALETTE, pick, TONE_STYLE, toneStyle, type Tone, type ToneMap } from "./theme";
 
 /**
  * The ONE breakpoint of /app: below 900px the two-column shell folds to one.
@@ -829,16 +805,20 @@ function PrefsCard({ boardId, boardName }: { boardId: string; boardName: string 
    from its stored spec. No locked tab name was touched: it all lives here. */
 
 interface SavedDash { id: string; title: string; purpose: string; sourceRef: string; createdAt: string }
-interface SpecW { kind: string; col?: string }
+interface SpecW { kind: string; col?: string; slice?: SliceSpec }
 
 const specWidgetLabel = (w: SpecW): string =>
   w.kind === "breakdown" ? `פילוח לפי "${w.col}"`
   : w.kind === "byOwner" ? `חלוקה לפי "${w.col}"`
   : w.kind === "numberSummary" ? `סיכום "${w.col}"`
   : w.kind === "crossBreakdown" ? `"${w.col}" מכל הלוחות יחד`
+  : w.kind === "slice" && w.slice
+    ? (w.slice.rowCol === BOARD_AXIS ? `מכל הלוחות יחד: ${describeSlice({ ...w.slice, rowCol: "לוח" })}` : describeSlice(w.slice))
   : w.kind === "attention" ? "מי דורש תשומת לב"
   : "רשימת הפריטים";
-const specKey = (w: SpecW) => `${w.kind}|${w.col ?? ""}`;
+// Two different slices are two different widgets, so the identity must carry
+// the whole request — not just the kind.
+const specKey = (w: SpecW) => `${w.kind}|${w.col ?? ""}|${w.slice ? JSON.stringify(w.slice) : ""}`;
 
 function DashboardsHome({ names, empty, activeBoards, allBoards, activeKey }: {
   names: string[]; empty: boolean; activeBoards: BoardOpt[]; allBoards: BoardOpt[]; activeKey: string;
@@ -984,6 +964,10 @@ function DashboardWizard({ boards, onClose, onCreated }: {
      "צריך לתת דוגמאות לדברים שאפשר לבנות") — an example naming the user's real
      column teaches what a purpose looks like better than generic text. */
   const [examples, setExamples] = useState<string[]>([]);
+  /* The columns a slice may name — the SAME list the model was given, so the
+     builder can never offer something the save would reject. */
+  const [sliceCols, setSliceCols] = useState<SliceCol[]>([]);
+  const [building, setBuilding] = useState(false);
   useEffect(() => {
     if (!boardId) return;
     let alive = true;
@@ -1007,6 +991,8 @@ function DashboardWizard({ boards, onClose, onCreated }: {
       setNote(d.note ?? null);
       setCross(d.cross ?? null);
       setCrossSave(null);
+      setSliceCols((d.sliceCols as SliceCol[]) ?? []);
+      setBuilding(false);
       setStep(2);
     } catch { setErr("לא הצלחנו לפנות לשרת"); }
     finally { setBusy(false); }
@@ -1015,8 +1001,9 @@ function DashboardWizard({ boards, onClose, onCreated }: {
   /* המעבר להצעה החוצה: רכיב אחד שקורא את העמודה מכל הלוחות שנמצאה בהם. */
   function goCross() {
     if (!cross) return;
-    setPicked([{ kind: "crossBreakdown", col: cross.column }]);
-    setMenu([{ kind: "crossBreakdown", col: cross.column }]);
+    const w: SpecW = { kind: "slice", slice: { rowCol: BOARD_AXIS, colCol: cross.column } };
+    setPicked([w]);
+    setMenu([w]);
     setTitle(`"${cross.column}" לפי לוח`);
     setCrossSave(cross.boardIds);
     setUsedAi(false);
@@ -1136,6 +1123,26 @@ function DashboardWizard({ boards, onClose, onCreated }: {
               value={title} onChange={(e) => setTitle(e.target.value)} maxLength={80}
               style={{ width: "100%", border: "1px solid #E6E4F0", borderRadius: 11, padding: "9px 13px", fontSize: 13.5, fontWeight: 700, fontFamily: "inherit", outline: "none", boxSizing: "border-box", marginBottom: 12 }}
             />
+            {sliceCols.length > 0 && !crossSave && (
+              <div style={{ marginBottom: 14 }}>
+                {building ? (
+                  <SliceBuilder
+                    cols={sliceCols}
+                    onAdd={(sl) => {
+                      const w: SpecW = { kind: "slice", slice: sl };
+                      if (!picked.some((p) => specKey(p) === specKey(w)) && picked.length < 8) setPicked([...picked, w]);
+                      setMenu(menu.some((m) => specKey(m) === specKey(w)) ? menu : [...menu, w]);
+                      setBuilding(false);
+                    }}
+                  />
+                ) : (
+                  <button
+                    onClick={() => setBuilding(true)}
+                    style={{ width: "100%", border: "1.5px dashed #DAD7EC", background: "#FFF", borderRadius: 12, padding: "10px 14px", fontSize: 12.5, fontWeight: 700, fontFamily: "inherit", color: C.grape, cursor: "pointer", textAlign: "right" }}
+                  >✂️ בניית חיתוך משלכם — כל עמודה לפי כל עמודה</button>
+                )}
+              </div>
+            )}
             <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 6 }}>הרכיבים ({picked.length}/8)</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
               {rows.map((w) => {
@@ -1363,6 +1370,7 @@ function ChartBody({ w, c }: { w: Widget; c: { fg: string; bg: string } }) {
       </div>
     );
   }
+  if (w.kind === "slice") return <SliceBody d={d as unknown as SliceData} />;
   if (w.kind === "numberSummary")
     return <div style={{ display: "flex", gap: 10 }}>{[["סה\"כ", d.sum], ["ממוצע", d.avg], ["מקס׳", d.max]].map(([l, v]) => <div key={l as string} style={{ flex: 1, background: c.bg, borderRadius: 13, padding: "12px" }}><div style={{ fontSize: 20, fontWeight: 800, color: c.fg, fontVariantNumeric: "tabular-nums" }}>{String(v)}</div><div style={{ fontSize: 11, color: C.muted }}>{l as string}</div></div>)}</div>;
   if (w.kind === "list") { const items = (d.items as string[]) || [];
