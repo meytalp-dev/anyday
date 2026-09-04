@@ -91,3 +91,42 @@ export async function refreshSheetSource(
 
   return { ok: true, board: sourceToBoard({ ...row, csv }), fetchedAt };
 }
+
+/**
+ * The org's saved spreadsheets, ready for the weekly digest.
+ *
+ * This is where "automations on a sheet" actually happens (הכרעת מיטל 4.9).
+ * A LINKED sheet is re-read first, so Sunday's email reports Sunday's numbers
+ * rather than whatever was true when somebody last opened the tab. A refetch
+ * that fails is not fatal: the stored copy still produces a correct email
+ * about an older moment, which beats sending nothing — the caller gets
+ * `stale: true` so the email can say which it is.
+ *
+ * An uploaded FILE is frozen by definition and is never marked stale: it is
+ * not out of date, it is simply all there ever was.
+ */
+export async function digestSheetBoards(
+  orgId: string,
+  ids: string[]
+): Promise<{ board: Board; title: string; stale: boolean; fetchedAt: string }[]> {
+  const out: { board: Board; title: string; stale: boolean; fetchedAt: string }[] = [];
+  for (const id of ids.slice(0, 20)) {
+    const row = await readSheetSource(orgId, id);
+    if (!row) continue;
+
+    if (row.kind === "link") {
+      const fresh = await refreshSheetSource(orgId, id);
+      if (fresh.ok && fresh.board) {
+        out.push({ board: fresh.board, title: row.title, stale: false, fetchedAt: fresh.fetchedAt });
+        continue;
+      }
+      const board = sourceToBoard(row);
+      if (board) out.push({ board, title: row.title, stale: true, fetchedAt: row.fetchedAt });
+      continue;
+    }
+
+    const board = sourceToBoard(row);
+    if (board) out.push({ board, title: row.title, stale: false, fetchedAt: row.fetchedAt });
+  }
+  return out;
+}

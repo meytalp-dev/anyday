@@ -111,8 +111,10 @@ interface RawBoard {
   items_page?: { cursor: string | null; items: RawItem[] };
 }
 
-/** How much of the data the answer is actually based on — for honest UI. */
-export function coverage(boards: FetchedBoard[]): Coverage {
+/** How much of the data the answer is actually based on — for honest UI.
+ *  Only the three counters are read, so the parameter asks for only those: a
+ *  stored spreadsheet reports coverage too, and it has no Monday item shape. */
+export function coverage(boards: { loaded: number; itemsCount: number; truncated: boolean }[]): Coverage {
   const loaded = boards.reduce((s, b) => s + b.loaded, 0);
   const total = boards.reduce((s, b) => s + Math.max(b.itemsCount, b.loaded), 0);
   const truncated = boards.some((b) => b.truncated);

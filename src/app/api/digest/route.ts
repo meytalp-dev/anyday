@@ -71,6 +71,8 @@ import { renderDigest, digestSection } from "@/lib/digest-email";
 import { sendEmail } from "@/lib/send-email";
 import { getDigestTargets, recordDigestRun, getOrgBranding } from "@/lib/session";
 import { rateLimit, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit";
+import { digestSheetBoards } from "@/lib/sheet-source-store";
+import type { DigestSource } from "@/lib/digest-email";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -205,21 +207,42 @@ async function runScheduled(params: Params) {
 
   for (const t of targets) {
     try {
-      const boards = await fetchBoards(t.boardIds, t.token);
-      if (!boards.length) {
-        const why = "הבורדים שנבחרו לא נמצאו או שאין אליהם הרשאה";
+      // Two kinds of source in one email. Monday boards are read live; saved
+      // spreadsheets are read from storage, and a LINKED one is refreshed
+      // first — that refresh is the automation (הכרעת מיטל 4.9).
+      const boards = t.boardIds.length ? await fetchBoards(t.boardIds, t.token) : [];
+      const sheets = await digestSheetBoards(t.orgId, t.sheetSourceIds);
+
+      if (!boards.length && !sheets.length) {
+        const why = t.boardIds.length
+          ? "הבורדים שנבחרו לא נמצאו או שאין אליהם הרשאה"
+          : "הגיליונות השמורים לא נקראו";
         failed.push({ org: t.orgName, error: why });
         await recordDigestRun(t.orgId, why);
         continue;
       }
 
-      const cov = coverage(boards);
+      // A stored sheet is whole by construction — nothing was paginated away,
+      // so it must never claim to be a sample.
+      const sheetSections: DigestSource[] = sheets.map((s) => ({
+        ...s.board,
+        name: s.stale ? `${s.title} (לא רוענן — מוצג המצב מ-${s.fetchedAt.slice(0, 10)})` : s.title,
+        itemsCount: s.board.items.length,
+        loaded: s.board.items.length,
+        truncated: false,
+      }));
+
+      // Coverage spans BOTH sources, so "מבוסס על X מתוך Y" describes the whole
+      // email. Sheets contribute their full row count and never truncation.
+      const sections: DigestSource[] = [...boards, ...sheetSections];
+      const cov = coverage(sections);
       const branding = await getOrgBranding(t.orgId);
       const digest = renderDigest({
-        boards: boards.map(digestSection),
+        boards: sections.map(digestSection),
         coverage: cov,
         generatedAt: new Date(),
-        sourceLabel: boards.map((b) => `"${b.name}"`).join(" · "),
+        sourceLabel: [...boards.map((b) => b.name), ...sheets.map((s) => s.title)]
+          .map((n) => `"${n}"`).join(" · "),
         branding,
       });
 

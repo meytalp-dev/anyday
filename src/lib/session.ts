@@ -187,10 +187,28 @@ export async function getOrgBranding(orgId: string): Promise<OrgBranding> {
 export interface DigestTarget {
   orgId: string;
   orgName: string;
-  /** Already decrypted. Never leaves the server. */
+  /** Already decrypted. Never leaves the server. Empty for a sheet-only org. */
   token: string;
   boardIds: string[];
+  /** Saved spreadsheets backing this org's sheet dashboards (הכרעת מיטל 4.9).
+   *  An org with these and no Monday still gets a digest. */
+  sheetSourceIds: string[];
   recipients: string[];
+}
+
+/** The saved spreadsheets an org's sheet dashboards point at. */
+async function sheetSourceIdsFor(
+  service: NonNullable<ReturnType<typeof createServiceClient>>,
+  orgId: string
+): Promise<string[]> {
+  const { data, error } = await service
+    .from("dashboards")
+    .select("source_ref")
+    .eq("org_id", orgId)
+    .eq("source_kind", "sheet");
+  // Before v7 the column/table may not answer — that is "no sheets", not a fault.
+  if (error) return [];
+  return [...new Set((data ?? []).map((d) => String(d.source_ref)).filter(Boolean))];
 }
 
 /**
@@ -284,24 +302,33 @@ export async function getDigestTargets(): Promise<{ targets: DigestTarget[]; ski
       continue;
     }
 
-    if (!org.monday_token_encrypted) {
-      skipped.push({ org: name, why: "מונדיי לא מחובר" });
-      continue;
+    // A saved spreadsheet is a digest source in its own right, so "no Monday"
+    // and "no boards chosen" are no longer reasons to skip an org — only
+    // reasons to have nothing FROM MONDAY in its email.
+    const sheetSourceIds = await sheetSourceIdsFor(service, org.id as string);
+
+    let token = "";
+    if (org.monday_token_encrypted) {
+      try {
+        token = decrypt(org.monday_token_encrypted as string);
+      } catch {
+        // A key rotation makes every stored token unreadable. Say so plainly
+        // instead of letting the run look merely empty.
+        if (!sheetSourceIds.length) {
+          skipped.push({ org: name, why: "הטוקן לא ניתן לפענוח — ייתכן ש-ENCRYPTION_KEY הוחלף" });
+          continue;
+        }
+      }
     }
 
-    let token: string;
-    try {
-      token = decrypt(org.monday_token_encrypted as string);
-    } catch {
-      // A key rotation makes every stored token unreadable. Say so plainly
-      // instead of letting the run look merely empty.
-      skipped.push({ org: name, why: "הטוקן לא ניתן לפענוח — ייתכן ש-ENCRYPTION_KEY הוחלף" });
-      continue;
-    }
-
-    const boardIds = ((org.digest_board_ids as string[]) ?? []).filter((id) => /^\d+$/.test(id));
-    if (!boardIds.length) {
-      skipped.push({ org: name, why: "לא נבחרו בורדים" });
+    const boardIds = token
+      ? ((org.digest_board_ids as string[]) ?? []).filter((id) => /^\d+$/.test(id))
+      : [];
+    if (!boardIds.length && !sheetSourceIds.length) {
+      skipped.push({
+        org: name,
+        why: org.monday_token_encrypted ? "לא נבחרו בורדים ואין גיליון שמור" : "מונדיי לא מחובר ואין גיליון שמור",
+      });
       continue;
     }
 
@@ -312,7 +339,7 @@ export async function getDigestTargets(): Promise<{ targets: DigestTarget[]; ski
       continue;
     }
 
-    targets.push({ orgId: org.id as string, orgName: name, token, boardIds, recipients });
+    targets.push({ orgId: org.id as string, orgName: name, token, boardIds, sheetSourceIds, recipients });
   }
 
   return { targets, skipped };

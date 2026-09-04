@@ -17,10 +17,17 @@
  * sheet as it is right now, keeping any type the user corrected (column ids
  * are positional, so they survive a refetch).
  *
- * ── What this screen is NOT ──
- * Still a view. No writing back, no automation, no digest — pretending
- * otherwise would be the "כאילו" this product exists to end. A live system
- * that ACTS is Monday, connected.
+ * ── Looking vs. saving (הכרעת מיטל 4.9) ──
+ * Everything above describes LOOKING, which still stores nothing and needs no
+ * account. SAVING is the one door out of that: a dashboard that must keep
+ * working when the tab is shut has to carry its spreadsheet with it, because
+ * an automation reads when nobody is looking. So a save stores the sheet, the
+ * SaveCard says so in those words before the button, and deleting the
+ * dashboard deletes the data with it.
+ *
+ * ── What this screen is still NOT ──
+ * A view, not a hand on the wheel. Nothing is written BACK to the source: a
+ * file has nowhere to write to, and a Google Sheet is read-only to us.
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -34,6 +41,7 @@ import { SliceBody, type SliceData } from "@/components/live/SliceTable";
 import { KpiTile, ChartCard } from "@/components/live/LiveWidgets";
 import { buildLiveBoard } from "@/lib/live-board";
 import { profileBoard, type BoardPrefs } from "@/lib/board-profile";
+import { useUser } from "@/lib/use-user";
 
 /* ── the palette of "לוח חי", so a sheet dashboard and a board dashboard are
       recognisably the same product ── */
@@ -116,6 +124,10 @@ export default function SheetPage() {
   const [source, setSource] = useState<Source>({ kind: "file" });
   const [busy, setBusy] = useState(false);
   const [fetchedAt, setFetchedAt] = useState<Date | null>(null);
+  /* The sheet's raw text, kept only so it can be SAVED on request (הכרעת
+     מיטל 4.9). Nothing reads it otherwise, and it goes nowhere until a person
+     presses save and is told, in those words, that it will be stored. */
+  const [csv, setCsv] = useState("");
 
   /* The plan the user actually approved: the guess, plus any type she corrected.
      Rebuilt on every render from the same inputs, so nothing is cached behind
@@ -125,7 +137,7 @@ export default function SheetPage() {
     [plan, types],
   );
 
-  function reset() { setPlan(null); setTypes({}); setStage("drop"); setErr(null); setSource({ kind: "file" }); setBusy(false); setFetchedAt(null); }
+  function reset() { setPlan(null); setTypes({}); setStage("drop"); setErr(null); setSource({ kind: "file" }); setBusy(false); setFetchedAt(null); setCsv(""); }
 
   /* A `?demo=` link opens straight on the dashboard: the whole point is that
      the visitor does nothing at all. Read from window rather than
@@ -135,7 +147,7 @@ export default function SheetPage() {
     loadDemo().then((r) => {
       if (!alive || !r) return;
       if (r.err) { setErr(r.err); return; }
-      setPlan(r.plan!); setTypes({}); setSource({ kind: "demo", key: r.key! }); setStage("dash");
+      setPlan(r.plan!); setTypes({}); setCsv(""); setSource({ kind: "demo", key: r.key! }); setStage("dash");
     });
     return () => { alive = false; };
   }, []);
@@ -148,6 +160,7 @@ export default function SheetPage() {
     if (!r.ok || d.error) { setErr(d.error || "לא הצלחתי למשוך את הגיליון."); return null; }
     const p = readSheet(d.title || "גיליון Google", d.csv || "");
     if (p.empty) { setErr("לא נמצאו נתונים בגיליון — כל השורות ריקות."); return null; }
+    setCsv(String(d.csv || ""));
     return p;
   }
 
@@ -184,7 +197,7 @@ export default function SheetPage() {
     try { text = await f.text(); } catch { setErr("לא הצלחתי לקרוא את הקובץ."); return; }
     const p = readSheet(f.name, text);
     if (p.empty) { setErr("לא נמצאו נתונים בקובץ — כל השורות ריקות."); return; }
-    setPlan(p); setTypes({}); setStage("confirm");
+    setPlan(p); setTypes({}); setCsv(text); setStage("confirm");
   }
 
   return (
@@ -204,6 +217,7 @@ export default function SheetPage() {
           <DashStage
             plan={finalPlan} onBack={() => setStage("confirm")} onReset={reset}
             live={source.kind === "link" ? { busy, fetchedAt, err, onRefresh: refresh } : undefined}
+            save={csv ? { csv, types, source } : undefined}
           />
         )}
       </main>
@@ -242,6 +256,10 @@ function PrivacyPill({ live, demo }: { live?: boolean; demo?: boolean }) {
       </span>
     );
   }
+  // The pill describes LOOKING, which is still stored nowhere. Saving stores
+  // the data, and that is stated at the moment of saving rather than watered
+  // down here — a promise that has to hedge for a thing you have not done yet
+  // teaches people to stop reading it.
   return (
     <span style={{ fontSize: 11.5, fontWeight: 700, color: "#0B8F76", background: C.tealL, borderRadius: 999, padding: "5px 11px", whiteSpace: "nowrap" }}>
       {live ? "🔒 לא נשמר אצלנו דבר" : "🔒 הקובץ נשאר בדפדפן שלך"}
@@ -437,7 +455,13 @@ function whyText(type: SheetType, identifier: boolean, filled: number, unique: n
 
 type LiveInfo = { busy: boolean; fetchedAt: Date | null; err: string | null; onRefresh: () => void };
 
-function DashStage({ plan, onBack, onReset, live }: { plan: SheetPlan; onBack: () => void; onReset: () => void; live?: LiveInfo }) {
+/** What a save needs: the raw text, the corrections, and where it came from.
+ *  Absent for a demo — fabricated people are not worth an org's storage. */
+type SaveInfo = { csv: string; types: Record<string, SheetType>; source: Source };
+
+function DashStage({ plan, onBack, onReset, live, save }: {
+  plan: SheetPlan; onBack: () => void; onReset: () => void; live?: LiveInfo; save?: SaveInfo;
+}) {
   const board = useMemo(() => planToBoard(plan), [plan]);
 
   /* The same computation a connected Monday board gets (בקשת מיטל 2.9), run
@@ -519,6 +543,8 @@ function DashStage({ plan, onBack, onReset, live }: { plan: SheetPlan; onBack: (
       </div>
 
       {more.length > 0 && <MoreRow more={more} onRestore={(k) => toggleKey("pinnedWidgets", k)} />}
+
+      {save && <SaveCard plan={plan} save={save} />}
 
       {hasTimeline && <Records board={board} />}
     </div>
@@ -680,6 +706,102 @@ function GoalCard({ board, prefs, setPrefs }: {
               );
             })}
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── saving, and the sentence that has to come with it ─────────────────────
+   הכרעת מיטל 4.9: store the data, so automations can run on an uploaded sheet.
+
+   An automation does not need to write anywhere — it needs to READ when nobody
+   is looking. The weekly digest fires Sunday at 05:00 with no browser open, and
+   a file dragged into a tab is gone by then. So a saved dashboard has to carry
+   its spreadsheet with it.
+
+   That makes the screen's standing promise ("הקובץ לא נשלח לשרת ולא נשמר")
+   false for this one action, and a false sentence in a privacy notice is worse
+   than no sentence. So: LOOKING still stores nothing and needs no account, and
+   this card is the only door out of that. It says what will be stored, before
+   the button, in the same words the product would use if asked later. */
+function SaveCard({ plan, save }: { plan: SheetPlan; save: SaveInfo }) {
+  const user = useUser();
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [title, setTitle] = useState(plan.boardName || plan.fileName);
+
+  const isLink = save.source.kind === "link";
+  const tooBig = save.csv.length > 2 * 1024 * 1024;
+
+  async function run() {
+    setBusy(true); setErr(null);
+    try {
+      // Two steps, deliberately: the spreadsheet is stored first and answers
+      // with its own id, so a dashboard can never point at a source that was
+      // not actually written.
+      const srcRes = await fetch("/api/sheet-sources", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title, kind: save.source.kind, csv: save.csv,
+          url: isLink ? (save.source as { url: string }).url : undefined,
+          typeOverrides: save.types,
+        }),
+      });
+      const src = await srcRes.json().catch(() => ({}));
+      if (!srcRes.ok) { setErr(src.error || "שמירת הגיליון נכשלה"); return; }
+
+      const dashRes = await fetch("/api/dashboards", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sheetSourceId: src.id, title, purpose: "" }),
+      });
+      const dash = await dashRes.json().catch(() => ({}));
+      if (!dashRes.ok) { setErr(dash.error || "יצירת הדשבורד נכשלה"); return; }
+      setDone(dash.id as string);
+    } catch { setErr("לא הצלחנו לפנות לשרת"); }
+    finally { setBusy(false); }
+  }
+
+  if (done) {
+    return (
+      <div style={{ ...card, borderColor: `${C.teal}66`, background: C.tealL, padding: "14px 17px", marginTop: 14, fontSize: 13, lineHeight: 1.75 }}>
+        ✓ נשמר. הדשבורד הזה קיים עכשיו גם כשהלשונית סגורה, והדיגסט השבועי יכלול אותו.{" "}
+        <Link href={`/app?tab=dash&dashboard=${done}`} style={{ color: "#0B8F76", fontWeight: 800 }}>לפתוח אותו →</Link>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ ...card, padding: "15px 18px", marginTop: 14 }}>
+      <div style={{ fontSize: 13.5, fontWeight: 800, marginBottom: 5 }}>לשמור את הדשבורד הזה?</div>
+      <div style={{ fontSize: 12.5, color: C.muted, lineHeight: 1.8, marginBottom: 12 }}>
+        עד עכשיו הכול חושב כאן בלשונית ולא נשמר בשום מקום. <b style={{ color: C.ink }}>שמירה משנה את זה:</b>{" "}
+        {isLink
+          ? "הקישור ותוכן הגיליון כפי שנמשך עכשיו יישמרו אצלנו, כדי שהשרת יוכל למשוך אותו מחדש לבד."
+          : "תוכן הגיליון עצמו יישמר אצלנו — אחרת אין מה לקרוא ביום ראשון בבוקר, כשהלשונית סגורה."}
+        {" "}זה מה שמאפשר דיגסט שבועי והתראות. מחיקת הדשבורד מוחקת גם את הנתונים.
+      </div>
+
+      {tooBig ? (
+        <div style={{ fontSize: 12.5, color: C.coral }}>הגיליון גדול מ-2MB — אפשר להסתכל עליו כאן, אבל לא לשמור אותו.</div>
+      ) : !user ? (
+        <div style={{ fontSize: 12.5, color: C.muted, lineHeight: 1.7 }}>
+          לשמירה צריך חשבון ארגוני — הנתונים נשמרים תחת ארגון, לא באוויר.{" "}
+          <Link href="/app" style={{ color: C.grape, fontWeight: 700 }}>להתחברות →</Link>
+        </div>
+      ) : (
+        <div style={{ display: "flex", gap: 9, alignItems: "center", flexWrap: "wrap" }}>
+          <input
+            value={title} onChange={(e) => setTitle(e.target.value.slice(0, 80))}
+            aria-label="שם הדשבורד"
+            style={{ flex: "1 1 220px", padding: "9px 12px", borderRadius: 11, border: `1.5px solid ${C.line}`, background: "#FAF9FE", fontSize: 13, fontFamily: FONT, color: C.ink, outline: "none" }}
+          />
+          <button
+            onClick={() => void run()} disabled={busy || !title.trim()}
+            style={{ border: "none", background: C.grape, color: "#fff", borderRadius: 11, padding: "10px 20px", fontSize: 13, fontWeight: 800, fontFamily: FONT, cursor: busy ? "wait" : "pointer", opacity: title.trim() ? 1 : .5 }}
+          >{busy ? "שומרים…" : "שמירה, כולל הנתונים"}</button>
+          {err && <span style={{ fontSize: 12, color: C.coral }}>{err}</span>}
         </div>
       )}
     </div>
