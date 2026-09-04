@@ -15,11 +15,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { getOrgContext } from "@/lib/session";
 import { createServiceClient, isSupabaseServerConfigured } from "@/lib/supabase-server";
 import { requireMonday } from "@/lib/monday-server";
-import { fetchBoards, parseBoardIds, coverage } from "@/lib/board-fetch";
+import { fetchBoards, parseBoardIds, coverage, type FetchedBoard } from "@/lib/board-fetch";
 import { computeSpecWidgets } from "@/lib/dashboard-compute";
-import { statusTones, type Widget } from "@/lib/board-intelligence";
+import { statusTones, type Board, type Widget } from "@/lib/board-intelligence";
 import type { DashboardSpec } from "@/lib/dashboard-spec";
 import { rateLimit, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit";
+import { sheetSourceBoard } from "@/lib/sheet-source-store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -46,26 +47,39 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
   const { data, error } = await service
     .from("dashboards")
-    .select("title, purpose, source_ref, spec")
+    .select("title, purpose, source_kind, source_ref, spec")
     .eq("id", id)
     .eq("org_id", ctx.orgId)
     .maybeSingle();
   if (error || !data) return noStore({ error: "הדשבורד לא נמצא" }, { status: 404 });
 
-  const guard = await requireMonday();
-  if (!guard.ok) return noStore({ error: guard.error }, { status: guard.status });
+  // Two kinds of source, one engine downstream. A sheet dashboard reads its
+  // stored spreadsheet (הכרעת מיטל 4.9) and never touches Monday at all — so
+  // it renders for an org with no Monday connection whatsoever.
+  // `coverage` reports what a PAGINATED Monday read missed. A stored sheet is
+  // whole by construction, so it stays null rather than claiming 100%.
+  let boards: Board[];
+  let fetched: FetchedBoard[] | null = null;
+  if (String(data.source_kind) === "sheet") {
+    const board = await sheetSourceBoard(ctx.orgId, String(data.source_ref));
+    if (!board) return noStore({ error: "הגיליון השמור לא נמצא" }, { status: 404 });
+    boards = [board];
+  } else {
+    const guard = await requireMonday();
+    if (!guard.ok) return noStore({ error: guard.error }, { status: guard.status });
 
-  // source_ref is one board id — or a csv of several, for a cross-board
-  // dashboard (בקשת מיטל: "סטטוס טיפול" מכל לוחות בתי הספר יחד).
-  const ids = parseBoardIds(String(data.source_ref), 10);
-  let boards;
-  try {
-    boards = await fetchBoards(ids, guard.token);
-  } catch (e: unknown) {
-    return noStore({ error: e instanceof Error ? e.message : "שגיאה בקריאת הבורד" }, { status: 502 });
+    // source_ref is one board id — or a csv of several, for a cross-board
+    // dashboard (בקשת מיטל: "סטטוס טיפול" מכל לוחות בתי הספר יחד).
+    const ids = parseBoardIds(String(data.source_ref), 10);
+    try {
+      fetched = await fetchBoards(ids, guard.token);
+      boards = fetched;
+    } catch (e: unknown) {
+      return noStore({ error: e instanceof Error ? e.message : "שגיאה בקריאת הבורד" }, { status: 502 });
+    }
+    if (!boards.length)
+      return noStore({ error: "בורד המקור לא נמצא ב-Monday או שאין אליו הרשאה" }, { status: 404 });
   }
-  if (!boards.length)
-    return noStore({ error: "בורד המקור לא נמצא ב-Monday או שאין אליו הרשאה" }, { status: 404 });
 
   // One call for every widget kind: single-board widgets read the first board,
   // cross-board slices read them all, and the old crossBreakdown shape still
@@ -82,7 +96,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     boardName: boards.map((b) => b.name).join(" · "),
     widgets,
     tones,
-    coverage: coverage(boards),
+    coverage: fetched ? coverage(fetched) : null,
   });
 }
 

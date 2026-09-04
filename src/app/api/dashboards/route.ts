@@ -25,6 +25,9 @@ import { sanitizeSpec } from "@/lib/dashboard-spec";
 import { fetchBoardMeta } from "@/lib/board-fetch";
 import { matchStatusColumn } from "@/lib/cross-board";
 import { BOARD_AXIS, resolveColumn } from "@/lib/slice";
+import { sheetSourceBoard } from "@/lib/sheet-source-store";
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 import { rateLimit, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
@@ -78,8 +81,47 @@ export async function POST(req: NextRequest) {
   if (!rl.ok) return noStore({ error: RATE_LIMIT_MESSAGE }, { status: 429 });
 
   const body = (await req.json().catch(() => ({}))) as {
-    boardId?: unknown; boardIds?: unknown; title?: unknown; purpose?: unknown; spec?: unknown;
+    boardId?: unknown; boardIds?: unknown; sheetSourceId?: unknown;
+    title?: unknown; purpose?: unknown; spec?: unknown;
   };
+
+  // ── a dashboard whose source is a SAVED SPREADSHEET (הכרעת מיטל 4.9) ──
+  //
+  // The spreadsheet was stored by /api/sheet-sources; here we only point a
+  // dashboard at it. The spec is validated against the sheet's REAL profile,
+  // exactly as a Monday spec is — the source differs, the wall does not. From
+  // this point on the dashboard renders, digests and alerts with no Monday
+  // connection anywhere in the path.
+  const sheetSourceId = String(body.sheetSourceId ?? "").trim();
+  if (sheetSourceId) {
+    if (!UUID.test(sheetSourceId)) return noStore({ error: "מזהה גיליון לא תקין" }, { status: 400 });
+    const board = await sheetSourceBoard(ctx.orgId, sheetSourceId);
+    if (!board) return noStore({ error: "הגיליון השמור לא נמצא" }, { status: 404 });
+
+    const profile = profileBoard(board);
+    const spec = sanitizeSpec({ title: body.title, widgets: (body.spec as { widgets?: unknown })?.widgets }, profile);
+    if (!spec.widgets.length)
+      return noStore({ error: "לא נבחר אף רכיב שהגיליון תומך בו" }, { status: 400 });
+
+    const service = createServiceClient();
+    if (!service) return noStore({ error: "אחסון לא זמין" }, { status: 503 });
+    const { data, error } = await service
+      .from("dashboards")
+      .insert({
+        org_id: ctx.orgId,
+        title: spec.title,
+        purpose: String(body.purpose ?? "").slice(0, MAX_PURPOSE),
+        source_kind: "sheet",
+        source_ref: sheetSourceId,
+        spec,
+        created_by: ctx.userId,
+      })
+      .select("id")
+      .single();
+    if (error || !data)
+      return noStore({ error: `${error?.message ?? "השמירה נכשלה"} — ודאו ש-supabase-schema-v7.sql הורצה` }, { status: 502 });
+    return noStore({ ok: true, id: data.id as string });
+  }
 
   // ── cross-board dashboard (בקשת מיטל): one column, sliced across boards ──
   //

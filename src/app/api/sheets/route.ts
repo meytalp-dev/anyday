@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { rateLimit, clientIp, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit";
+// The SSRF rule lives in one place, because a saved sheet source re-reads the
+// same link on a schedule and a second copy is a second place to be wrong.
+import { csvUrlFor, SHARE_HINT } from "@/lib/sheets-url";
 
 /**
  * POST /api/sheets — fetch a shared Google Sheet as CSV, for /sheet.
@@ -11,33 +14,10 @@ import { rateLimit, clientIp, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit";
  * dropped file gets (sheet-to-board), so there is exactly one place that
  * understands a spreadsheet.
  *
- * ── SSRF rule ──
- * The URL the user pasted is never fetched. It is only PARSED — for a
- * spreadsheet id (and optional gid) — and the fetch URL is rebuilt from a
- * fixed template on a fixed host. A pasted URL can choose WHICH public sheet
- * to read, and nothing else.
+ * The SSRF rule (parse the pasted link, never fetch it) lives in lib/sheets-url.
  */
 
 const MAX_BYTES = 20 * 1024 * 1024; // the same cap the file path enforces
-
-const SHARE_HINT =
-  "ודאו שהגיליון משותף: שיתוף ← גישה כללית ← \"כל מי שיש לו הקישור\" (צופה מספיק).";
-
-/** The two shapes of a Sheets link, each mapped to its own CSV endpoint. */
-function csvUrlFor(raw: string): { url: string } | { bad: string } {
-  let u: URL;
-  try { u = new URL(raw); } catch { return { bad: "זה לא נראה כמו קישור. הדביקו את הכתובת המלאה מהדפדפן." }; }
-  if (u.hostname !== "docs.google.com") {
-    return { bad: "הקישור צריך להיות של Google Sheets (docs.google.com). פתחו את הגיליון והעתיקו את הכתובת מהדפדפן." };
-  }
-  // The tab id lives in the hash (#gid=), sometimes in the query.
-  const gid = (u.hash.match(/gid=(\d+)/) || u.search.match(/gid=(\d+)/) || [])[1];
-  const pub = u.pathname.match(/^\/spreadsheets\/d\/e\/([A-Za-z0-9_-]+)/);
-  if (pub) return { url: `https://docs.google.com/spreadsheets/d/e/${pub[1]}/pub?output=csv${gid ? `&gid=${gid}` : ""}` };
-  const doc = u.pathname.match(/^\/spreadsheets\/(?:u\/\d+\/)?d\/([A-Za-z0-9_-]+)/);
-  if (doc) return { url: `https://docs.google.com/spreadsheets/d/${doc[1]}/export?format=csv${gid ? `&gid=${gid}` : ""}` };
-  return { bad: "לא זיהיתי בקישור מזהה של גיליון. פתחו את הגיליון והעתיקו את הכתובת מהדפדפן." };
-}
 
 /** The sheet's own name, when Google says it (content-disposition filename). */
 function titleFrom(res: Response): string | null {
