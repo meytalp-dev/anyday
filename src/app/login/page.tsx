@@ -186,8 +186,13 @@ function LoginContent() {
           </button>
         </div>
 
+        {/* This sentence used to be plain text, and the documents it promised
+            did not exist — /terms and /privacy both answered 404. A consent
+            line nobody can follow is worse than none: it asks for agreement
+            to something unreadable. */}
         <p style={{ fontSize: 12, color: "var(--color-muted2)", marginTop: 24 }}>
-          בהתחברות אתם מסכימים לתנאי השימוש ומדיניות הפרטיות
+          בהתחברות אתם מסכימים ל<a href="/terms" style={{ color: "inherit", textDecoration: "underline" }}>תנאי השימוש</a>
+          {" ול"}<a href="/privacy" style={{ color: "inherit", textDecoration: "underline" }}>מדיניות הפרטיות</a>
         </p>
       </div>
     </div>

@@ -382,6 +382,12 @@ export default function Home() {
       {/* ─── FOOTER ─── */}
       <footer className="foot">
         <a href="/" className="nav__logo"><span className="nav__mark nav__mark--sm">A</span><span className="nav__name">AnyDay</span></a>
+        {/* A buyer's lawyer looks for these in the footer before anywhere else. */}
+        <p>
+          <a href="/terms">תנאי שימוש</a>
+          {" · "}
+          <a href="/privacy">מדיניות פרטיות</a>
+        </p>
         <p>&copy; {new Date().getFullYear()} AnyDay</p>
       </footer>
     </div>
