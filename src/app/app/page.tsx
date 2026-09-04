@@ -481,9 +481,11 @@ function RailBody({ q, setQ, shown, active, toggle }: {
 
 /* ===== the connect gate =====
    State 3, the one /app never had: /api/boards answered "not connected".
-   Both ways into Monday are offered here - the OAuth flow, and /welcome for
-   whoever pastes a personal token - because /welcome is still the only route
-   for a personal token and must not be cut off. */
+   OAuth is always offered. The personal-token route is offered only when the
+   server says it is open: on a public deployment /api/connect answers 403, so
+   showing the link sent people to paste a token and be refused. Same rule as
+   the social-login buttons — a hidden working link costs one extra click, a
+   dead one costs the visitor's belief that the product works. */
 function GateFrame({ children }: { children: ReactNode }) {
   return (
     <div dir="rtl" style={{ minHeight: "100vh", background: C.bg, fontFamily: "Rubik, Assistant, Heebo, system-ui, sans-serif", color: C.ink, display: "grid", placeItems: "center", padding: 24 }}>
@@ -493,6 +495,17 @@ function GateFrame({ children }: { children: ReactNode }) {
 }
 
 function ConnectGate() {
+  // Undefined until the server answers, and never true on a failed answer:
+  // the link stays hidden unless the route is known to be open.
+  const [personalToken, setPersonalToken] = useState(false);
+  useEffect(() => {
+    let live = true;
+    getMondayStatus()
+      .then((s) => { if (live) setPersonalToken(s.personalToken === true); })
+      .catch(() => { if (live) setPersonalToken(false); });
+    return () => { live = false; };
+  }, []);
+
   return (
     <GateFrame>
       <div style={{ background: C.panel, borderRadius: 22, padding: "38px 30px 30px", textAlign: "center", boxShadow: "0 18px 50px -28px rgba(60,50,120,.45)" }}>
@@ -503,10 +516,12 @@ function ConnectGate() {
           onClick={() => { window.location.href = "/api/monday-oauth/authorize?return_to=/app"; }}
           style={{ width: "100%", background: `linear-gradient(135deg,${C.grape},${C.coral})`, color: "#fff", border: "none", borderRadius: 15, padding: "15px", fontSize: 16.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}
         >{"התחברו ל-Monday"}</button>
-        <a
-          href="/welcome"
-          style={{ display: "block", marginTop: 16, fontSize: 13, color: C.muted, textDecoration: "underline", fontFamily: "inherit" }}
-        >{"יש לכם טוקן אישי? התחברו כאן"}</a>
+        {personalToken && (
+          <a
+            href="/welcome"
+            style={{ display: "block", marginTop: 16, fontSize: 13, color: C.muted, textDecoration: "underline", fontFamily: "inherit" }}
+          >{"יש לכם טוקן אישי? התחברו כאן"}</a>
+        )}
       </div>
     </GateFrame>
   );

@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { getMondayStatus } from "@/lib/api-client";
 
 const PURPLE = "#6C4CF1";
 const PURPLE2 = "#8A6BFF";
@@ -16,6 +17,24 @@ export default function WelcomePage() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [account, setAccount] = useState<string | null>(null);
+  /* Is the paste-a-token route open on this deployment? Only the server knows,
+     and on a public URL the answer is no — /api/connect replies 403. This page
+     used to walk everyone into that refusal, so it asks first and sends them
+     down OAuth instead. Starts closed and stays closed on any failed answer:
+     the safe default is the one that works for every visitor. */
+  const [pasteAllowed, setPasteAllowed] = useState(false);
+  useEffect(() => {
+    let live = true;
+    getMondayStatus()
+      .then((st) => { if (live) setPasteAllowed(st.personalToken === true); })
+      .catch(() => { if (live) setPasteAllowed(false); });
+    return () => { live = false; };
+  }, []);
+
+  const begin = () => {
+    if (pasteAllowed) { setStep("connect"); return; }
+    window.location.href = "/api/monday-oauth/authorize?return_to=/app";
+  };
 
   async function connect() {
     if (token.trim().length < 20) { setErr("הדביקו טוקן תקין מ-Monday"); return; }
@@ -42,7 +61,7 @@ export default function WelcomePage() {
       <div style={{ position: "absolute", width: 300, height: 300, borderRadius: "50%", background: PURPLE2, opacity: 0.06, bottom: -100, insetInlineStart: -60, filter: "blur(80px)" }} />
 
       <div style={{ width: "100%", maxWidth: 460, position: "relative", zIndex: 1 }}>
-        {step === "welcome" && <Welcome onNext={() => setStep("connect")} />}
+        {step === "welcome" && <Welcome onNext={begin} />}
         {step === "connect" && <Connect token={token} setToken={setToken} onConnect={connect} busy={busy} err={err} onBack={() => setStep("welcome")} />}
         {step === "waking" && <Waking account={account} onDone={() => setStep("choose")} />}
         {step === "choose" && <ChooseBoards onDone={() => router.push("/snapshot")} />}

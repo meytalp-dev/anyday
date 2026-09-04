@@ -85,6 +85,8 @@ export async function getMondayStatus(): Promise<{
   connected: boolean;
   orgName?: string;
   accountName?: string | null;
+  /** Is the paste-a-personal-token route open? Absent answer = closed. */
+  personalToken?: boolean;
 }> {
   const res = await fetch("/api/monday/status", { cache: "no-store" });
   return res.json();
