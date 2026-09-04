@@ -225,20 +225,34 @@ export default function SheetPage() {
   );
 }
 
+/* The bar carries five things, and on a 390px phone they add up to 453px —
+   which pushed the WHOLE PAGE sideways, so every screen below it could be
+   dragged left and right. The two that only orient someone already looking
+   (the section label and the file name) step aside on a narrow screen; the
+   logo, the privacy pill and the way out stay, because those are the ones a
+   first-time visitor needs. */
+const TOPBAR_CSS = `
+.sheetbar{padding:0 22px;gap:14px}
+@media (max-width:640px){
+  .sheetbar{padding:0 12px;gap:10px}
+  .sheetbar__label,.sheetbar__file{display:none}
+}`;
+
 function TopBar({ onReset, fileName, live, demo }: { onReset?: () => void; fileName?: string; live?: boolean; demo?: boolean }) {
   return (
-    <header style={{ height: 58, background: C.panel, borderBottom: `1px solid ${C.line}`, display: "flex", alignItems: "center", gap: 14, padding: "0 22px", position: "sticky", top: 0, zIndex: 20 }}>
-      <Link href="/" style={{ display: "flex", alignItems: "center", gap: 9, textDecoration: "none", color: C.ink }}>
+    <header className="sheetbar" style={{ height: 58, background: C.panel, borderBottom: `1px solid ${C.line}`, display: "flex", alignItems: "center", position: "sticky", top: 0, zIndex: 20 }}>
+      <style>{TOPBAR_CSS}</style>
+      <Link href="/" style={{ display: "flex", alignItems: "center", gap: 9, textDecoration: "none", color: C.ink, flexShrink: 0 }}>
         <div style={{ width: 32, height: 32, borderRadius: 10, background: `linear-gradient(135deg,${C.grape},#FF2D87)`, color: "#fff", display: "grid", placeItems: "center", fontWeight: 800, fontSize: 16 }}>A</div>
         <div style={{ fontWeight: 800, fontSize: 18 }}>Any<span style={{ color: C.grape }}>Day</span></div>
       </Link>
-      <span style={{ fontSize: 12.5, color: C.muted, fontWeight: 600, borderInlineStart: `1px solid ${C.line}`, paddingInlineStart: 14 }}>
+      <span className="sheetbar__label" style={{ fontSize: 12.5, color: C.muted, fontWeight: 600, borderInlineStart: `1px solid ${C.line}`, paddingInlineStart: 14 }}>
         דשבורד מגיליון
       </span>
-      {fileName && <span style={{ fontSize: 12, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 260 }}>{fileName}</span>}
-      <div style={{ marginInlineStart: "auto", display: "flex", gap: 8, alignItems: "center" }}>
+      {fileName && <span className="sheetbar__file" style={{ fontSize: 12, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 260 }}>{fileName}</span>}
+      <div style={{ marginInlineStart: "auto", display: "flex", gap: 8, alignItems: "center", minWidth: 0 }}>
         <PrivacyPill live={live} demo={demo} />
-        {onReset && <button onClick={onReset} style={btnGhost}>מקור אחר</button>}
+        {onReset && <button onClick={onReset} style={{ ...btnGhost, flexShrink: 0 }}>מקור אחר</button>}
       </div>
     </header>
   );
