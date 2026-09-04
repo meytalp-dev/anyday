@@ -16,7 +16,7 @@
 // shape) — with no extra logic for either.
 
 import { valueOf, parseBoardDate, type Board, type Col, type Item, type Widget } from "./board-intelligence";
-import { bucketOf, columnMentioned } from "./board-profile";
+import { bucketOf, columnMentioned, hasSignal, profileBoard } from "./board-profile";
 import { bucketizeValues, EMPTY_KEY, OTHER_KEY, type BucketKey } from "./slice-buckets";
 
 /** Sentinel axis: "group by which board this row came from". Structural, not a word. */
@@ -408,6 +408,35 @@ export function sliceWidget(boards: Board[], spec: SliceSpec): Widget | null {
     : `בורד ${q(boards[0].name)}`;
 
   return { kind: "slice", title: sliceTitle(spec), source, data: { ...result, spec } };
+}
+
+/* ------------------------------------------------- an opening suggestion */
+
+/** Past this, a cross-tab has more columns than a person reads at a glance. */
+const SUGGEST_MAX_DISTINCT = 8;
+
+/**
+ * The one slice worth showing before anybody asks for one.
+ *
+ * A dashboard that opens on six one-dimensional breakdowns reads as a picture
+ * rather than as a tool: nothing on it says the cuts are the reader's to make.
+ * So the screen opens on a real two-dimensional cut taken from this board's own
+ * columns — the two best-ranked category columns that carry a signal and stay
+ * narrow enough to read. Structure only, no words and no AI: the same ranking
+ * the dashboard already trusts to order its widgets.
+ *
+ * Returns null when the board has no two such columns; the screen then simply
+ * offers the builder, as before.
+ */
+export function suggestSlice(board: Board): SliceSpec | null {
+  const axes = profileBoard(board).columns.filter(
+    (c) =>
+      (c.bucket === "status" || c.bucket === "people") &&
+      hasSignal(c) &&
+      c.distinct <= SUGGEST_MAX_DISTINCT
+  );
+  if (axes.length < 2) return null;
+  return { rowCol: axes[0].title, colCol: axes[1].title };
 }
 
 export { EMPTY_KEY, OTHER_KEY };

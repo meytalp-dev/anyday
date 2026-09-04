@@ -13,7 +13,7 @@
  * שהועלה (`planToBoard` מייצר את אותה צורה) — בלי שורת לוגיקה נוספת.
  */
 import { describe, it, expect } from "vitest";
-import { sliceBoard, sliceBoards, sliceWidget, BOARD_AXIS, type SliceSpec } from "../slice";
+import { sliceBoard, sliceBoards, sliceWidget, suggestSlice, BOARD_AXIS, type SliceSpec } from "../slice";
 import type { Board, Col, Item } from "../board-intelligence";
 
 const col = (id: string, title: string, type: string, settings?: object): Col => ({
@@ -265,5 +265,41 @@ describe("גבולות — טבלה חייבת להישאר קריאה", () => {
     const r = sliceBoard(big, { rowCol: "מזהה" })!;
     expect(r.rowKeys.length).toBeLessThanOrEqual(9);
     expect(r.grandTotal).toBe(500); // שום שורה לא אבדה — היא נכנסה ל"אחר"
+  });
+});
+
+/* ── ההצעה הפותחת ─────────────────────────────────────────────────────────
+   דשבורד שנפתח על שישה פילוחים חד-ממדיים נקרא כתמונה, לא ככלי. לכן המסך
+   נפתח על חיתוך דו-ממדי אמיתי מהעמודות של הלוח עצמו — ורק אם יש שתי עמודות
+   קטגוריה עם סימן ובטווח קריא. */
+describe("suggestSlice — החיתוך שנפתח לבד", () => {
+  it("בוחר שני צירי קטגוריה, ובונה מהם טבלה צולבת שהמנוע יודע לחשב", () => {
+    const spec = suggestSlice(BOARD);
+    expect(spec).not.toBeNull();
+    expect(spec!.colCol).toBeTruthy();
+    expect(spec!.rowCol).not.toBe(spec!.colCol);
+    // ההצעה חייבת להיות בת-חישוב, אחרת המסך ייפתח על כרטיס ריק.
+    expect(sliceWidget([BOARD], spec!)).not.toBeNull();
+  });
+
+  it("לא מציע דבר כשאין שתי עמודות קטגוריה", () => {
+    const thin: Board = {
+      id: "b2", name: "רשימה", columns: [COLS[0], COLS[3]],
+      items: BOARD.items,
+    };
+    expect(suggestSlice(thin)).toBeNull();
+  });
+
+  it("לא מציע עמודה שכולה ערך אחד — פילוח כזה לא מפלח דבר", () => {
+    const flat: Board = {
+      ...BOARD,
+      items: BOARD.items.map((it) => ({
+        ...it,
+        values: it.values.map((v) => (v.colId === "school" ? { ...v, text: "אשקלון" } : v)),
+      })),
+    };
+    const spec = suggestSlice(flat);
+    expect(spec?.rowCol).not.toBe("בית ספר");
+    expect(spec?.colCol).not.toBe("בית ספר");
   });
 });

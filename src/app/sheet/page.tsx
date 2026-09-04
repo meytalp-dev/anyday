@@ -34,7 +34,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import * as BI from "@/lib/board-intelligence";
 import { readSheet, planToBoard, type SheetPlan, type SheetType } from "@/lib/sheet-to-board";
-import { sliceWidget, type SliceSpec } from "@/lib/slice";
+import { sliceWidget, suggestSlice, type SliceSpec } from "@/lib/slice";
 import { bucketOf } from "@/lib/board-profile";
 import { SliceBuilder, describe as describeSlice, type SliceCol } from "@/components/live/SliceBuilder";
 import { SliceBody, type SliceData } from "@/components/live/SliceTable";
@@ -558,9 +558,17 @@ function DashStage({ plan, onBack, onReset, live, save }: {
    the slice is computed IN THE TAB, like everything else on this screen, so a
    spreadsheet still never leaves the browser.
 
-   No account, no wizard, no AI: the builder IS the whole interface. */
+   No account, no wizard, no AI: the builder IS the whole interface — which is
+   exactly why the screen must not open on an empty one. It opens on a real
+   two-dimensional cut of this board (`suggestSlice`), so the first thing seen
+   is the tool working and not a wall of automatic breakdowns. */
 function SliceSection({ board }: { board: BI.Board }) {
-  const [slices, setSlices] = useState<SliceSpec[]>([]);
+  // Seeded once, from the board the screen opened with: afterwards the list is
+  // the reader's, and re-seeding would put back a cut they deliberately closed.
+  const [slices, setSlices] = useState<SliceSpec[]>(() => {
+    const s = suggestSlice(board);
+    return s ? [s] : [];
+  });
   const [building, setBuilding] = useState(false);
 
   const cols: SliceCol[] = useMemo(
@@ -578,17 +586,32 @@ function SliceSection({ board }: { board: BI.Board }) {
   if (!cols.length) return null;
 
   return (
-    <div style={{ margin: "0 0 14px" }}>
-      {building ? (
+    <div style={{ margin: "0 0 18px" }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+        <h2 style={{ fontSize: 16, fontWeight: 800, margin: 0 }}>✂️ החיתוכים שלכם</h2>
+        <span style={{ fontSize: 12, color: C.muted }}>
+          כל עמודה לפי כל עמודה — קבצו, הצליבו, מדדו וסננו. הכול מחושב כאן בלשונית.
+        </span>
+        {!building && (
+          <button
+            onClick={() => setBuilding(true)}
+            style={{ marginInlineStart: "auto", padding: "9px 16px", borderRadius: 10, border: "none", background: C.grape, color: "#fff", fontSize: 13, fontWeight: 800, fontFamily: "inherit", cursor: "pointer" }}
+          >+ חיתוך חדש</button>
+        )}
+      </div>
+
+      {building && (
         <div style={{ marginBottom: built.length ? 12 : 0 }}>
           <SliceBuilder cols={cols} onAdd={(sl) => { setSlices([...slices, sl]); setBuilding(false); }} />
           <button onClick={() => setBuilding(false)} style={{ ...btnGhost, marginTop: 8 }}>ביטול</button>
         </div>
-      ) : (
+      )}
+
+      {!building && built.length === 0 && (
         <button
           onClick={() => setBuilding(true)}
-          style={{ ...card, width: "100%", padding: "11px 15px", border: `1.5px dashed ${C.grape}55`, background: "#fff", color: C.grape, fontSize: 13, fontWeight: 700, fontFamily: "inherit", cursor: "pointer", textAlign: "right", marginBottom: built.length ? 12 : 0 }}
-        >✂️ בניית חיתוך משלכם — כל עמודה לפי כל עמודה</button>
+          style={{ ...card, width: "100%", padding: "11px 15px", border: `1.5px dashed ${C.grape}55`, background: "#fff", color: C.grape, fontSize: 13, fontWeight: 700, fontFamily: "inherit", cursor: "pointer", textAlign: "right" }}
+        >בניית החיתוך הראשון — כל עמודה לפי כל עמודה</button>
       )}
 
       {built.length > 0 && (
