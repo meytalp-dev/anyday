@@ -372,3 +372,45 @@ function suggestWidgets(columns: ColumnProfile[]): SuggestedWidget[] {
   out.push({ kind: "list", label: "רשימת הפריטים" });
   return out;
 }
+
+/**
+ * Columns that ANOTHER board has, that this purpose asks for, and that THIS
+ * board cannot answer.
+ *
+ * The wizard already knew how to say "that column lives on another board" —
+ * but it only looked when the purpose mentioned no column of this board at
+ * all. A purpose that asks for two things, one of which is here, satisfied
+ * that test and the other half was dropped without a word: מיטל asked for
+ * "סטטוס טיפול של כל הבוגרים", the board had "בית ספר", and she got a school
+ * breakdown and no explanation.
+ *
+ * So the question is per-column rather than per-sentence: for each column the
+ * purpose names somewhere in the account, is it available HERE? The ones that
+ * are not are exactly what the user should be told about.
+ */
+export function askedForElsewhere(
+  purpose: string,
+  localTitles: string[],
+  others: { boardId: string; boardName: string; titles: string[] }[]
+): { boardId: string; boardName: string; column: string }[] {
+  if (!purpose.trim()) return [];
+
+  // "Available here" is judged with the same matcher the rest of the product
+  // uses, so a local "סטטוס" answers a request for "סטטוס טיפול" instead of
+  // being reported as missing.
+  const answeredHere = (title: string) =>
+    localTitles.some((lt) => columnMentioned(lt, title) || columnMentioned(title, lt));
+
+  const seen = new Set<string>();
+  const out: { boardId: string; boardName: string; column: string }[] = [];
+  for (const b of others) {
+    for (const title of b.titles) {
+      if (!columnMentioned(title, purpose)) continue;
+      if (answeredHere(title)) continue;
+      if (seen.has(title)) continue;
+      seen.add(title);
+      out.push({ boardId: b.boardId, boardName: b.boardName, column: title });
+    }
+  }
+  return out;
+}

@@ -21,7 +21,7 @@ import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { requireMonday, mondayQuery } from "@/lib/monday-server";
 import { fetchBoards } from "@/lib/board-fetch";
-import { profileBoard, applyPreferences, selectLiveWidgets, columnMentioned, type BoardProfile } from "@/lib/board-profile";
+import { profileBoard, applyPreferences, selectLiveWidgets, askedForElsewhere, type BoardProfile } from "@/lib/board-profile";
 import { readBoardPrefs } from "@/lib/board-prefs";
 import { sanitizeSpec, defaultSpec, ensureMentionedColumns, type DashboardSpec } from "@/lib/dashboard-spec";
 import { rateLimit, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit";
@@ -161,7 +161,14 @@ ${JSON.stringify(sliceColumns(profile))}`;
   // ACROSS all the boards that carry it. A generic purpose produces no noise.
   let note: { text: string; boardId: string; boardName: string } | null = null;
   let cross: { column: string; boardIds: string[]; boardNames: string[] } | null = null;
-  if (purpose && !profile.columns.some((c) => columnMentioned(c.title, purpose))) {
+  // The gate used to be "the purpose mentions NO column of this board".
+  // A purpose asking for two things, one of them present, satisfied it — and
+  // the absent half was dropped in silence (מיטל 5.9: "סטטוס טיפול של כל
+  // הבוגרים" on a board that has "בית ספר" and no treatment status). The
+  // question is per column now, so one available thing no longer hides an
+  // unavailable one. Still one cheap columns-only query, and still nothing at
+  // all for a purpose that names no column anywhere.
+  if (purpose) {
     try {
       const list = await mondayQuery(
         `query { boards(limit: 20, order_by: used_at, state: active) { id name columns { title } } }`,
@@ -170,17 +177,19 @@ ${JSON.stringify(sliceColumns(profile))}`;
       const others = ((list?.boards ?? []) as { id: string; name: string; columns?: { title: string }[] }[])
         .filter((b) => String(b.id) !== boardId)
         .map((b) => ({ id: String(b.id), name: b.name, titles: (b.columns ?? []).map((c) => c.title) }));
-      const hits = others
-        .map((b) => ({ boardId: b.id, boardName: b.name, column: b.titles.find((t) => columnMentioned(t, purpose)) }))
-        .filter((h): h is { boardId: string; boardName: string; column: string } => Boolean(h.column));
+      const hits = askedForElsewhere(
+        purpose,
+        profile.columns.map((c) => c.title),
+        others.map((b) => ({ boardId: b.id, boardName: b.name, titles: b.titles }))
+      );
 
       if (hits.length) {
         const hit = hits[0];
         note = {
           text:
             hits.length === 1
-              ? `בלוח "${profile.boardName}" אין עמודה שמתאימה למה שכתבתם — אבל בלוח "${hit.boardName}" יש עמודת "${hit.column}". ההצעה למטה נבנתה ממה שכן קיים כאן.`
-              : `בלוח "${profile.boardName}" אין עמודה שמתאימה למה שכתבתם — אבל היא קיימת ב-${hits.length} לוחות אחרים. אפשר להציג אותה מכולם יחד, בפילוח לפי לוח.`,
+              ? `בלוח "${profile.boardName}" אין עמודת "${hit.column}" — היא קיימת בלוח "${hit.boardName}". ההצעה למטה נבנתה ממה שכן קיים כאן.`
+              : `בלוח "${profile.boardName}" אין עמודת "${hit.column}" — היא קיימת ב-${hits.length} לוחות אחרים. אפשר להציג אותה מכולם יחד, בפילוח לפי לוח.`,
           boardId: hit.boardId,
           boardName: hit.boardName,
         };
