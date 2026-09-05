@@ -15,10 +15,25 @@ import { crossBreakdown } from "./cross-board";
 import { sliceWidget } from "./slice";
 import type { DashboardSpec } from "./dashboard-spec";
 
-export function computeSpecWidgets(boards: Board[], spec: DashboardSpec): Widget[] {
+/**
+ * A saved dashboard's widgets, plus the ones this board could not produce.
+ *
+ * Every widget that failed to compute used to be dropped on the floor. A spec
+ * naming a column the board does not have — which is what an AI proposal does
+ * when it guesses a name — therefore produced a dashboard with zero widgets,
+ * saved successfully, and rendered as a title above empty space. The user is
+ * told "created" and shown nothing, with no way to learn why.
+ *
+ * So the failures come back too. Nothing is hidden; the screen decides how to
+ * say it.
+ */
+export function computeSpecWidgets(
+  boards: Board[], spec: DashboardSpec
+): { widgets: Widget[]; unbuilt: DashboardSpec["widgets"] } {
   const board = boards[0];
-  if (!board) return [];
+  if (!board) return { widgets: [], unbuilt: spec.widgets };
 
+  const unbuilt: DashboardSpec["widgets"] = [];
   const out: Widget[] = [];
   for (const w of spec.widgets) {
     let computed: Widget | null = null;
@@ -37,6 +52,7 @@ export function computeSpecWidgets(boards: Board[], spec: DashboardSpec): Widget
         break;
     }
     if (computed) out.push(computed);
+    else unbuilt.push(w);
   }
-  return out;
+  return { widgets: out, unbuilt };
 }

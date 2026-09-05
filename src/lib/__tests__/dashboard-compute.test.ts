@@ -36,7 +36,7 @@ function donorsBoard(): Board {
 
 describe("computeSpecWidgets — הרכיבים שהאישור קבע, בסדר שהאישור קבע", () => {
   it("כל רכיב ב-spec מחושב מהמנוע ומחזיר נתונים אמיתיים", () => {
-    const ws = computeSpecWidgets([donorsBoard()], {
+    const { widgets: ws } = computeSpecWidgets([donorsBoard()], {
       title: "תורמים",
       widgets: [
         { kind: "breakdown", col: "סטטוס קשר" },
@@ -54,7 +54,7 @@ describe("computeSpecWidgets — הרכיבים שהאישור קבע, בסדר 
   });
 
   it("רכיב שהלוח כבר לא תומך בו (עמודה נמחקה במונדיי) מדולג בשקט, לא קורס", () => {
-    const ws = computeSpecWidgets([donorsBoard()], {
+    const { widgets: ws } = computeSpecWidgets([donorsBoard()], {
       title: "x",
       widgets: [
         { kind: "breakdown", col: "עמודה שנמחקה" },
@@ -72,14 +72,14 @@ describe("computeSpecWidgets — הרכיבים שהאישור קבע, בסדר 
  */
 describe("computeSpecWidgets — חיתוכים", () => {
   it("רכיב חיתוך מחושב ומוחזר כ-slice", () => {
-    const ws = computeSpecWidgets([donorsBoard()], {
+    const { widgets: ws } = computeSpecWidgets([donorsBoard()], {
       title: "ד", widgets: [{ kind: "slice", slice: { rowCol: "אחראי", colCol: "סטטוס קשר" } }],
     });
     expect(ws.map((w) => w.kind)).toEqual(["slice"]);
   });
 
   it("חיתוך שהעמודה שלו נמחקה במונדיי מדולג בשקט — הדשבורד לא קורס", () => {
-    const ws = computeSpecWidgets([donorsBoard()], {
+    const { widgets: ws } = computeSpecWidgets([donorsBoard()], {
       title: "ד", widgets: [
         { kind: "slice", slice: { rowCol: "עמודה שנמחקה" } },
         { kind: "list" },
@@ -91,7 +91,7 @@ describe("computeSpecWidgets — חיתוכים", () => {
   it("crossBreakdown שנשמר לפני המנוע החדש ממשיך להתרנדר", () => {
     const a = { ...donorsBoard(), id: "a", name: "א" };
     const b = { ...donorsBoard(), id: "b", name: "ב" };
-    const ws = computeSpecWidgets([a, b], {
+    const { widgets: ws } = computeSpecWidgets([a, b], {
       title: "ד", widgets: [{ kind: "crossBreakdown", col: "סטטוס קשר" } as never],
     });
     expect(ws).toHaveLength(1);
@@ -101,10 +101,47 @@ describe("computeSpecWidgets — חיתוכים", () => {
   it("חיתוך על ציר הלוח רואה את כל הלוחות, לא רק את הראשון", () => {
     const a = { ...donorsBoard(), id: "a", name: "א" };
     const b = { ...donorsBoard(), id: "b", name: "ב" };
-    const ws = computeSpecWidgets([a, b], {
+    const { widgets: ws } = computeSpecWidgets([a, b], {
       title: "ד", widgets: [{ kind: "slice", slice: { rowCol: "__board__", colCol: "סטטוס קשר" } }],
     });
     const data = ws[0].data as { rowKeys: { key: string }[] };
     expect(data.rowKeys.map((k) => k.key)).toEqual(["א", "ב"]);
+  });
+});
+
+/* ── מה שלא ניתן היה לבנות ────────────────────────────────────────────────
+   מיטל, 5.9: ביקשה בוויזרד "סטטוס טיפול מכלל הבוגרים" — הדשבורד נוצר, נשמר,
+   והוצג ככותרת מעל רווח לבן. השרת החזיר 200 בכל שלב.
+
+   הסיבה: רכיב שלא ניתן לחשב נזרק בשקט. ספק ששמו עמודה שלא קיימת בבורד ייצר
+   דשבורד עם אפס רכיבים — ושום שכבה לא ידעה לומר את זה. */
+describe("computeSpecWidgets — לא זורק בשקט", () => {
+  it("מחזיר את הרכיבים שנכשלו, ולא רק את אלה שהצליחו", () => {
+    const { widgets, unbuilt } = computeSpecWidgets([donorsBoard()], {
+      widgets: [
+        { kind: "breakdown", col: "עמודה שאינה קיימת" },
+        { kind: "breakdown", col: "סטטוס קשר" },
+      ],
+    } as never);
+    expect(widgets).toHaveLength(1);
+    expect(unbuilt).toHaveLength(1);
+    expect(unbuilt[0].col).toBe("עמודה שאינה קיימת");
+  });
+
+  it("ספק שכולו עמודות לא קיימות מדווח על כולן — זה המקרה של המסך הריק", () => {
+    const spec = { widgets: [
+      { kind: "breakdown", col: "אין כזו" },
+      { kind: "numberSummary", col: "גם לא זו" },
+    ] } as never;
+    const { widgets, unbuilt } = computeSpecWidgets([donorsBoard()], spec);
+    expect(widgets).toHaveLength(0);
+    expect(unbuilt).toHaveLength(2);
+  });
+
+  it("בלי בורד כלל — הכול מדווח כלא-נבנה, ולא כדשבורד ריק תקין", () => {
+    const spec = { widgets: [{ kind: "breakdown", col: "סטטוס קשר" }] } as never;
+    const { widgets, unbuilt } = computeSpecWidgets([], spec);
+    expect(widgets).toHaveLength(0);
+    expect(unbuilt).toHaveLength(1);
   });
 });

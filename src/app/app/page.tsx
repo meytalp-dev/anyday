@@ -886,7 +886,7 @@ function DashboardsHome({ names, empty, activeBoards, allBoards, activeKey }: {
 
 /* One saved dashboard, rendered live from its stored spec. */
 function SavedDashboardView({ id, onGone }: { id: string; onGone: () => void }) {
-  const [d, setD] = useState<{ title: string; purpose: string; boardName: string; widgets: Widget[]; coverage?: Cov } | null>(null);
+  const [d, setD] = useState<{ title: string; purpose: string; boardName: string; widgets: Widget[]; unbuilt?: SpecW[]; coverage?: Cov } | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -947,9 +947,30 @@ function SavedDashboardView({ id, onGone }: { id: string; onGone: () => void }) 
           </div>
         </div>
       )}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(300px,1fr))", gap: 14, alignItems: "start" }}>
-        {rest.map((w, i) => <ChartCard key={i} w={w} i={i} />)}
-      </div>
+      {/* A dashboard whose widgets all failed used to render as this heading
+          above empty space — created successfully, explaining nothing. The
+          board simply does not have the columns the proposal named, and that
+          is a sentence somebody can act on. */}
+      {(d.unbuilt?.length ?? 0) > 0 && (
+        <div style={{ background: C.amberL, border: `1px solid ${C.amber}55`, borderRadius: 16, padding: "14px 18px", marginBottom: 16, fontSize: 13, lineHeight: 1.8 }}>
+          <b>{rest.length === 0 ? "אף רכיב לא נבנה." : "חלק מהרכיבים לא נבנו."}</b>{" "}
+          {`בבורד "${d.boardName}" אין את העמודות שהוגדרו: `}
+          {d.unbuilt!.map((w) => `"${w.col ?? specWidgetLabel(w)}"`).join(" · ")}.
+          <div style={{ marginTop: 6, color: C.muted, fontSize: 12.5 }}>
+            אפשר למחוק את הדשבורד הזה ולבנות חדש — הפעם מהעמודות שקיימות בבורד.
+          </div>
+        </div>
+      )}
+
+      {rest.length > 0 ? (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(300px,1fr))", gap: 14, alignItems: "start" }}>
+          {rest.map((w, i) => <ChartCard key={i} w={w} i={i} />)}
+        </div>
+      ) : !d.unbuilt?.length && !attData && (
+        <div style={{ background: C.panel, border: "1px solid #ECEBF5", borderRadius: 18, padding: "22px 20px", textAlign: "center", color: C.muted, fontSize: 13.5 }}>
+          אין כאן רכיבים להצגה.
+        </div>
+      )}
     </div>
   );
 }

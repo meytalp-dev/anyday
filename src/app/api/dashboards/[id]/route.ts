@@ -85,7 +85,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   // cross-board slices read them all, and the old crossBreakdown shape still
   // renders for dashboards saved before the slice engine.
   const spec = data.spec as DashboardSpec;
-  const widgets: Widget[] = computeSpecWidgets(boards, spec);
+  const { widgets, unbuilt } = computeSpecWidgets(boards, spec);
 
   const tones: Record<string, string> = {};
   for (const b of boards) Object.assign(tones, statusTones(b));
@@ -95,6 +95,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     purpose: (data.purpose as string) ?? "",
     boardName: boards.map((b) => b.name).join(" · "),
     widgets,
+    // What this board could not produce. The screen must say so rather than
+    // render a title above nothing.
+    unbuilt,
     tones,
     coverage: fetched ? coverage(fetched) : null,
   });
