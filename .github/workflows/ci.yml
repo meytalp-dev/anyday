@@ -1,0 +1,63 @@
+# בדיקות אוטומטיות על כל דחיפה.
+#
+# WHY THIS EXISTS
+# Deploys here are manual (`npx vercel --prod`), and the checks were manual too
+# — four commands somebody had to remember to run, in the right order, before
+# every one of them. Two real bugs in this repo reached production because a
+# step was skipped, not because it was hard.
+#
+# Nothing here needs a secret. It runs on the fork, on any branch, and on every
+# pull request, so a red mark shows up before anybody deploys rather than after.
+#
+# LINT IS DELIBERATELY NOT HERE YET
+# `eslint .` currently reports 17 errors that predate this file — mostly the
+# newer react-hooks/set-state-in-effect rule. Adding a step that is red on its
+# first run teaches everyone to ignore the red, which costs more than the lint
+# was worth. It goes in as its own step once those are cleared.
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+# A second push to the same branch makes the first run irrelevant. Cancelling
+# it keeps the queue honest about what is actually being tested.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      # `ci` and not `install`: the lockfile is the point, and a run that
+      # quietly resolved different versions is not testing what ships.
+      - name: התקנת תלויות
+        run: npm ci
+
+      - name: בדיקת טיפוסים
+        run: npx tsc --noEmit
+
+      - name: טסטים
+        run: npm test
+
+      # The build is its own check: a Next route can typecheck and still fail
+      # to compile, and that failure belongs here rather than mid-deploy.
+      - name: Build
+        run: npm run build
+        env:
+          # The build must not depend on real credentials. These are obvious
+          # placeholders — if a build step ever needs a genuine key, that is a
+          # design problem to fix, not a secret to add here.
+          NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key
