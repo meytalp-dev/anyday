@@ -453,12 +453,21 @@ export function canonicalColumn(
   const uniq = [...new Set(candidates.filter((c) => c.trim()))];
   if (!uniq.length) return null;
 
-  const reach = (candidate: string) =>
-    boards.filter((b) =>
-      b.titles.some((t) => columnMentioned(t, candidate) || columnMentioned(candidate, t))
-    ).length;
+  // HOW MANY BOARDS LITERALLY USE THIS NAME — not how many it fuzzily reaches.
+  //
+  // "Reach" was the previous rule and it rewarded vagueness, because a short
+  // generic word is contained inside every longer title. On the real account:
+  // "היום" reached 17 boards — "מה עושה היום" on 11 of them, plus "היום",
+  // "הגיע/לא הגיע - היום לבית ספר", "איפה רשימת הבוגרים מנוהלת היום?" — while
+  // "מה עושה היום" reached 13. The emptiest word won, and the request that
+  // went out asked every board for a date column nobody meant.
+  //
+  // The canonical spelling is the one most boards actually call their column.
+  // Ties go to the longer title, the more specific of two used equally often.
+  const used = (candidate: string) =>
+    boards.filter((b) => b.titles.some((t) => t.trim() === candidate.trim())).length;
 
   return uniq
-    .map((c) => ({ c, n: reach(c) }))
+    .map((c) => ({ c, n: used(c) }))
     .sort((a, b) => b.n - a.n || b.c.length - a.c.length)[0].c;
 }
