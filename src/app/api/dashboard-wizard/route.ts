@@ -171,7 +171,11 @@ ${JSON.stringify(sliceColumns(profile))}`;
   if (purpose) {
     try {
       const list = await mondayQuery(
-        `query { boards(limit: 20, order_by: used_at, state: active) { id name columns { title } } }`,
+        // 20 was enough when this only had to find ONE board holding the column.
+        // It is not enough to COUNT them: an org with a board per school can
+        // easily pass twenty, and a truncated list turns "it lives on all of
+        // them" into "it lives on that one". Columns only, still no items.
+        `query { boards(limit: 100, order_by: used_at, state: active) { id name columns { title } } }`,
         guard.token
       );
       const others = ((list?.boards ?? []) as { id: string; name: string; columns?: { title: string }[] }[])

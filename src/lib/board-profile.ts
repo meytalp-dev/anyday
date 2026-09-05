@@ -401,16 +401,22 @@ export function askedForElsewhere(
   const answeredHere = (title: string) =>
     localTitles.some((lt) => columnMentioned(lt, title) || columnMentioned(title, lt));
 
-  const seen = new Set<string>();
+  // ONE ENTRY PER BOARD, not per column name.
+  //
+  // The first version de-duplicated by column title, and that quietly broke
+  // the thing this function exists to enable: the caller counts these entries
+  // to decide between "that column lives on board X" and the real offer —
+  // "it lives on N boards, show it from all of them at once, split by board".
+  // Ten schools each holding "מה עושה היום" collapsed to one, so the offer
+  // never appeared. When every board IS a school, that offer is precisely the
+  // dashboard the user asked for.
+  //
+  // A board is still reported once even if several of its columns match; the
+  // first match is the one named, as before.
   const out: { boardId: string; boardName: string; column: string }[] = [];
   for (const b of others) {
-    for (const title of b.titles) {
-      if (!columnMentioned(title, purpose)) continue;
-      if (answeredHere(title)) continue;
-      if (seen.has(title)) continue;
-      seen.add(title);
-      out.push({ boardId: b.boardId, boardName: b.boardName, column: title });
-    }
+    const column = b.titles.find((t) => columnMentioned(t, purpose) && !answeredHere(t));
+    if (column) out.push({ boardId: b.boardId, boardName: b.boardName, column });
   }
   return out;
 }
