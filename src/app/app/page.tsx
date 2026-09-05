@@ -12,7 +12,9 @@ import { SmartBuilder } from "@/components/builder/SmartBuilder";
 import type { MondayBoard, MondayItem } from "@/types";
 import { parseDelimited, headRow, normKey, looksLikeHeader } from "@/lib/sheet-to-board";
 import { useUser } from "@/lib/use-user";
-import { examplePurposes, type BoardProfile } from "@/lib/board-profile";
+import { examplePurposes, type BoardProfile, type ColumnCandidate } from "@/lib/board-profile";
+import type { ColumnCoverage } from "@/lib/column-coverage";
+import { CandidatePicker } from "@/components/live/CandidatePicker";
 import { BOARD_AXIS, type SliceSpec } from "@/lib/slice";
 import { SliceBuilder, describe as describeSlice, type SliceCol } from "@/components/live/SliceBuilder";
 import { KpiTile, ChartCard, type Kpi as KPI } from "@/components/live/LiveWidgets";
@@ -992,10 +994,21 @@ function DashboardWizard({ boards, onClose, onCreated }: {
   /* "ביקשת עמודה שלא בלוח הזה — היא קיימת בלוח אחר": ההודעה הכנה מהשרת,
      עם כפתור שמעביר ללוח הנכון (המקרה של מיטל עם "סטטוס טיפול"). */
   const [note, setNote] = useState<{ text: string; boardId: string; boardName: string } | null>(null);
-  /* חיתוך חוצה-לוחות: העמודה קיימת בכמה לוחות (אחד לכל בית ספר) — ההצעה
-     החכמה היא דשבורד אחד שקורא אותה מכולם, בפילוח לפי לוח (בקשת מיטל). */
-  const [cross, setCross] = useState<{ column: string; boardIds: string[]; boardNames: string[] } | null>(null);
+  /* המועמדות — כל העמודות בחשבון שיכולות לענות על המשפט, מדורגות. הראשונה
+     מסומנת מראש (זו שהמנוע היה בוחר לבד), אבל הבחירה היא של המשתמשת: עד היום
+     המערכת ניחשה אחת מתוך חמש ולא הראתה את הניחוש (מיטל, 5.9). */
+  const [candidates, setCandidates] = useState<ColumnCandidate[]>([]);
+  const [candIdx, setCandIdx] = useState(0);
+  /* הכיסוי פר מועמדת — כמה מהשורות באמת מלאות. נמדד מיד עם קבלת הרשימה, כדי
+     שייאמר לפני הבנייה ולא יתגלה אחריה. */
+  const [coverage, setCoverage] = useState<Record<string, ColumnCoverage>>({});
+  const [covLoading, setCovLoading] = useState(false);
+  const [crossBoardMax, setCrossBoardMax] = useState(10);
   const [crossSave, setCrossSave] = useState<string[] | null>(null);
+  const [crossPicked, setCrossPicked] = useState<{ column: string; boardNames: string[] } | null>(null);
+  /* מה שהיה על המסך לפני המעבר לחוצה-לוחות. הבחירה חייבת להיות הפיכה: מסך
+     שכל תכליתו להחזיר את ההכרעה למשתמשת לא יכול להיות כביש חד-סטרי. */
+  const [preCross, setPreCross] = useState<{ title: string; picked: SpecW[]; menu: SpecW[]; usedAi: boolean } | null>(null);
   /* Example purposes, built from the SELECTED board's own columns (משוב מיטל:
      "צריך לתת דוגמאות לדברים שאפשר לבנות") — an example naming the user's real
      column teaches what a purpose looks like better than generic text. */
@@ -1025,8 +1038,15 @@ function DashboardWizard({ boards, onClose, onCreated }: {
       if (!r.ok) { setErr(d.error || "ההצעה נכשלה"); return; }
       setTitle(d.spec.title); setPicked(d.spec.widgets); setMenu(d.menu || d.spec.widgets); setUsedAi(Boolean(d.usedAi));
       setNote(d.note ?? null);
-      setCross(d.cross ?? null);
+      const cands = (d.candidates as ColumnCandidate[]) ?? [];
+      setCandidates(cands);
+      setCandIdx(0);
+      setCoverage({});
+      setCrossBoardMax(typeof d.crossBoardMax === "number" ? d.crossBoardMax : 10);
       setCrossSave(null);
+      setCrossPicked(null);
+      setPreCross(null);
+      void measureCoverage(cands, typeof d.crossBoardMax === "number" ? d.crossBoardMax : 10);
       setSliceCols((d.sliceCols as SliceCol[]) ?? []);
       setBuilding(false);
       setStep(2);
@@ -1034,16 +1054,51 @@ function DashboardWizard({ boards, onClose, onCreated }: {
     finally { setBusy(false); }
   }
 
-  /* המעבר להצעה החוצה: רכיב אחד שקורא את העמודה מכל הלוחות שנמצאה בהם. */
+  /* כמה מהעמודה באמת מלא — נמדד על אותם לוחות שמהם ייבנה הדשבורד, כך שהאחוז
+     שמוצג הוא האחוז של מה שייווצר. קריאה של עמודה אחת בלבד, לא של הלוחות. */
+  async function measureCoverage(cands: ColumnCandidate[], max: number) {
+    if (!cands.length) return;
+    setCovLoading(true);
+    try {
+      const r = await fetch("/api/column-coverage", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          candidates: cands.map((c) => ({ column: c.column, boardIds: c.boards.slice(0, max).map((b) => b.boardId) })),
+        }),
+      });
+      const d = await r.json().catch(() => ({}));
+      const map: Record<string, ColumnCoverage> = {};
+      for (const c of ((d.coverage as ColumnCoverage[]) ?? [])) map[c.column] = c;
+      setCoverage(map);
+    } catch { /* הכיסוי הוא תוספת — בלעדיו הבורר עדיין מציג את הרשימה והמספרים החינמיים */ }
+    finally { setCovLoading(false); }
+  }
+
+  /* המעבר להצעה החוצה: רכיב אחד שקורא את העמודה שנבחרה מכל הלוחות שנושאים
+     אותה — בדיוק אלה שהמספרים למעלה תיארו. */
   function goCross() {
-    if (!cross) return;
-    const w: SpecW = { kind: "slice", slice: { rowCol: BOARD_AXIS, colCol: cross.column } };
+    const cur = candidates[candIdx];
+    if (!cur || cur.boards.length < 2) return;
+    const w: SpecW = { kind: "slice", slice: { rowCol: BOARD_AXIS, colCol: cur.column } };
+    const use = cur.boards.slice(0, crossBoardMax);
+    setPreCross({ title, picked, menu, usedAi });
     setPicked([w]);
     setMenu([w]);
-    setTitle(`"${cross.column}" לפי לוח`);
-    setCrossSave(cross.boardIds);
+    setTitle(`"${cur.column}" לפי לוח`);
+    setCrossSave(use.map((b) => b.boardId));
+    setCrossPicked({ column: cur.column, boardNames: use.map((b) => b.boardName) });
     setUsedAi(false);
-    setNote(null);
+  }
+
+  /* חזרה מהבחירה — הבורר חוזר, וההצעה המקורית איתו. */
+  function undoCross() {
+    setCrossSave(null);
+    setCrossPicked(null);
+    if (preCross) {
+      setTitle(preCross.title); setPicked(preCross.picked);
+      setMenu(preCross.menu); setUsedAi(preCross.usedAi);
+    }
+    setPreCross(null);
   }
 
   async function save() {
@@ -1128,26 +1183,29 @@ function DashboardWizard({ boards, onClose, onCreated }: {
 
         {step === 2 && (
           <>
-            {note && (
-              <div style={{ background: C.amberL, border: `1px solid ${C.amber}55`, borderRadius: 12, padding: "10px 14px", marginBottom: 12 }}>
-                <div style={{ fontSize: 12.5, color: C.ink, lineHeight: 1.6, marginBottom: 7 }}>💡 {note.text}</div>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  {cross && (
-                    <button
-                      onClick={goCross}
-                      style={{ border: "none", background: C.grape, color: "#fff", borderRadius: 9, padding: "6px 13px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
-                    >{`📊 להציג את ״${cross.column}״ מכל ${cross.boardIds.length} הלוחות יחד ←`}</button>
-                  )}
-                  <button
-                    onClick={() => { setBoardId(note.boardId); setNote(null); setCross(null); setStep(1); }}
-                    style={{ border: "none", background: C.amber, color: "#fff", borderRadius: 9, padding: "6px 13px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
-                  >{`לבנות על ״${note.boardName}״ בלבד ←`}</button>
-                </div>
-              </div>
+            {/* הבורר: הרשימה הסופית שהמערכת ניחשה מתוכה — מוצגת (מיטל, 5.9). */}
+            {note && candidates.length > 0 && !crossSave && (
+              <CandidatePicker
+                note={note.text}
+                candidates={candidates}
+                coverage={coverage}
+                covLoading={covLoading}
+                picked={candIdx}
+                onPick={setCandIdx}
+                crossBoardMax={crossBoardMax}
+                onBuildCross={goCross}
+                onGoBoard={(id) => { setBoardId(id); setNote(null); setCandidates([]); setStep(1); }}
+              />
             )}
-            {crossSave && cross && (
+            {crossSave && crossPicked && (
               <div style={{ background: C.grapeL, border: `1px solid ${C.grape}44`, borderRadius: 12, padding: "10px 14px", marginBottom: 12, fontSize: 12.5, color: C.ink, lineHeight: 1.6 }}>
-                📊 דשבורד חוצה-לוחות: ״{cross.column}״ ייקרא חי מ-{cross.boardNames.join(" · ")} — ויוצג בפילוח לפי לוח.
+                📊 דשבורד חוצה-לוחות: ״{crossPicked.column}״ ייקרא חי מ-{crossPicked.boardNames.join(" · ")} — ויוצג בפילוח לפי לוח.
+                {candidates.length > 1 && (
+                  <button
+                    onClick={undoCross}
+                    style={{ border: "1px solid #D9D3F6", background: "#fff", color: C.grape, borderRadius: 8, padding: "4px 10px", fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", marginRight: 8 }}
+                  >↩ לבחור עמודה אחרת</button>
+                )}
               </div>
             )}
             <p style={{ fontSize: 12.5, color: C.muted, margin: "0 0 14px", lineHeight: 1.7 }}>

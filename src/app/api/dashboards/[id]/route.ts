@@ -21,6 +21,7 @@ import { statusTones, type Board, type Widget } from "@/lib/board-intelligence";
 import type { DashboardSpec } from "@/lib/dashboard-spec";
 import { rateLimit, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit";
 import { sheetSourceBoard } from "@/lib/sheet-source-store";
+import { CROSS_BOARD_MAX } from "@/lib/cross-board";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -70,7 +71,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
     // source_ref is one board id — or a csv of several, for a cross-board
     // dashboard (בקשת מיטל: "סטטוס טיפול" מכל לוחות בתי הספר יחד).
-    const ids = parseBoardIds(String(data.source_ref), 10);
+    const ids = parseBoardIds(String(data.source_ref), CROSS_BOARD_MAX);
     try {
       fetched = await fetchBoards(ids, guard.token);
       boards = fetched;

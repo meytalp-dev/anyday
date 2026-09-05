@@ -12,6 +12,17 @@ import * as BI from "./board-intelligence";
 import type { Board, Col, Widget, Tone } from "./board-intelligence";
 import { columnMentioned } from "./board-profile";
 
+/**
+ * How many boards one cross-board dashboard may read.
+ *
+ * It lives here rather than as a literal in each route because THREE places
+ * have to agree on it: the save (which boards are stored), the render (which
+ * boards are read back), and the wizard (which must say out loud when a
+ * candidate is on more boards than this — a school dropped in silence is
+ * exactly the failure this whole screen exists to prevent).
+ */
+export const CROSS_BOARD_MAX = 10;
+
 const STATUS_TYPES = ["status", "color", "dropdown"];
 
 /** This board's own version of the asked-for column, or null — never a guess. */

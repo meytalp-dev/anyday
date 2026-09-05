@@ -450,24 +450,119 @@ export function canonicalColumn(
   candidates: string[],
   boards: { titles: string[] }[]
 ): string | null {
-  const uniq = [...new Set(candidates.filter((c) => c.trim()))];
-  if (!uniq.length) return null;
+  return rankSpellings(candidates, boards)[0] ?? null;
+}
 
-  // HOW MANY BOARDS LITERALLY USE THIS NAME — not how many it fuzzily reaches.
-  //
-  // "Reach" was the previous rule and it rewarded vagueness, because a short
-  // generic word is contained inside every longer title. On the real account:
-  // "היום" reached 17 boards — "מה עושה היום" on 11 of them, plus "היום",
-  // "הגיע/לא הגיע - היום לבית ספר", "איפה רשימת הבוגרים מנוהלת היום?" — while
-  // "מה עושה היום" reached 13. The emptiest word won, and the request that
-  // went out asked every board for a date column nobody meant.
-  //
-  // The canonical spelling is the one most boards actually call their column.
-  // Ties go to the longer title, the more specific of two used equally often.
+/**
+ * The spellings, best first — the ONE ranking, shared by the automatic choice
+ * (canonicalColumn) and the picker the user sees (columnCandidates). Two
+ * rankings would drift, and the preselected option would stop being the option
+ * the engine would have picked on its own.
+ *
+ * HOW MANY BOARDS LITERALLY USE THIS NAME — not how many it fuzzily reaches.
+ *
+ * "Reach" was the previous rule and it rewarded vagueness, because a short
+ * generic word is contained inside every longer title. On the real account:
+ * "היום" reached 17 boards — "מה עושה היום" on 11 of them, plus "היום",
+ * "הגיע/לא הגיע - היום לבית ספר", "איפה רשימת הבוגרים מנוהלת היום?" — while
+ * "מה עושה היום" reached 13. The emptiest word won, and the request that
+ * went out asked every board for a date column nobody meant.
+ *
+ * Ties go to the longer title, the more specific of two used equally often.
+ */
+function rankSpellings(candidates: string[], boards: { titles: string[] }[]): string[] {
+  const uniq = [...new Set(candidates.map((c) => c.trim()).filter(Boolean))];
   const used = (candidate: string) =>
-    boards.filter((b) => b.titles.some((t) => t.trim() === candidate.trim())).length;
+    boards.filter((b) => b.titles.some((t) => t.trim() === candidate)).length;
 
   return uniq
     .map((c) => ({ c, n: used(c) }))
-    .sort((a, b) => b.n - a.n || b.c.length - a.c.length)[0].c;
+    .sort((a, b) => b.n - a.n || b.c.length - a.c.length)
+    .map((x) => x.c);
+}
+
+/* --------------------------------------------------- the candidates, shown */
+
+export interface CandidateBoard {
+  boardId: string;
+  boardName: string;
+  /** The board's row count, as Monday reports it — no items are read for this. */
+  rows: number;
+}
+
+export interface ColumnCandidate {
+  /** The title, spelled exactly as the boards spell it. */
+  column: string;
+  /** What kind of column it is, taken from the boards that carry it. */
+  bucket: ColumnBucket;
+  /** Boards whose column is literally called this — the number we show. */
+  boards: CandidateBoard[];
+  /** Boards that answer this name only under a DIFFERENT spelling. Counted
+   *  apart, never folded in: "11 לוחות" must mean eleven boards that call it
+   *  that, or the number is the vague-word metric again, wearing a new name. */
+  nearBoards: CandidateBoard[];
+  /** Rows on `boards` — the denominator any fill percentage is measured over. */
+  rows: number;
+}
+
+/** One Hebrew word per bucket, so server and screen never disagree. */
+export const BUCKET_LABEL: Record<ColumnBucket, string> = {
+  status: "סטטוס", date: "תאריך", people: "אנשים",
+  number: "מספר", text: "טקסט", meta: "מערכת",
+};
+
+/**
+ * Every column that could answer the purpose — as a LIST, ranked, for the user
+ * to choose from.
+ *
+ * This is the same evidence `canonicalColumn` decides on; the difference is
+ * that it is no longer swallowed. The system read the column names of the whole
+ * account in one query and picked one of five — guessing out of a finite list
+ * that could simply be shown is a design failure, not a bug. So the free text
+ * goes back to PROPOSING (the top-ranked candidate arrives preselected) and the
+ * user does the deciding.
+ *
+ * Only boards that actually came back as hits are considered, so the counts
+ * here are the counts the dashboard will be built from.
+ */
+export function columnCandidates(
+  hits: { boardId: string; boardName: string; columns: string[] }[],
+  boards: { boardId: string; boardName: string; columns: { title: string; type: string }[]; rows: number }[]
+): ColumnCandidate[] {
+  if (!hits.length) return [];
+  const byId = new Map(boards.map((b) => [b.boardId, b]));
+  const hitBoards = hits.map((h) => byId.get(h.boardId)).filter((b): b is NonNullable<typeof b> => Boolean(b));
+
+  const spellings = rankSpellings(
+    hits.flatMap((h) => h.columns),
+    hitBoards.map((b) => ({ titles: b.columns.map((c) => c.title) }))
+  );
+
+  const out: ColumnCandidate[] = [];
+  for (const column of spellings) {
+    const literal: CandidateBoard[] = [];
+    const near: CandidateBoard[] = [];
+    for (const h of hits) {
+      const b = byId.get(h.boardId);
+      if (!b) continue;
+      const entry = { boardId: b.boardId, boardName: b.boardName, rows: b.rows };
+      if (h.columns.some((c) => c.trim() === column)) literal.push(entry);
+      else if (h.columns.some((c) => columnMentioned(c, column) || columnMentioned(column, c))) near.push(entry);
+    }
+    if (!literal.length) continue;
+
+    // The type comes from a board that really carries this title — never guessed.
+    const typed = hitBoards
+      .flatMap((b) => b.columns)
+      .find((c) => c.title.trim() === column);
+
+    out.push({
+      column,
+      bucket: typed ? bucketOf(typed.type) : "text",
+      boards: literal,
+      nearBoards: near,
+      rows: literal.reduce((s, b) => s + b.rows, 0),
+    });
+  }
+  return out;
 }

@@ -23,7 +23,7 @@ import { profileBoard, applyPreferences } from "@/lib/board-profile";
 import { readBoardPrefs } from "@/lib/board-prefs";
 import { sanitizeSpec } from "@/lib/dashboard-spec";
 import { fetchBoardMeta } from "@/lib/board-fetch";
-import { matchStatusColumn } from "@/lib/cross-board";
+import { matchStatusColumn, CROSS_BOARD_MAX } from "@/lib/cross-board";
 import { BOARD_AXIS, resolveColumn } from "@/lib/slice";
 import { sheetSourceBoard } from "@/lib/sheet-source-store";
 
@@ -147,7 +147,7 @@ export async function POST(req: NextRequest) {
     const ids = (Array.isArray(body.boardIds) ? body.boardIds : [])
       .map((x) => String(x).trim())
       .filter((x) => /^\d+$/.test(x))
-      .slice(0, 10);
+      .slice(0, CROSS_BOARD_MAX);
     if (ids.length < 2)
       return noStore({ error: "חיתוך חוצה-לוחות דורש לפחות שני לוחות" }, { status: 400 });
     if (crossW && !colQuery)

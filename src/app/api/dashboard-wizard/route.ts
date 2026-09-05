@@ -21,7 +21,8 @@ import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { requireMonday, mondayQuery } from "@/lib/monday-server";
 import { fetchBoards } from "@/lib/board-fetch";
-import { profileBoard, applyPreferences, selectLiveWidgets, askedForElsewhere, canonicalColumn, columnMentioned, type BoardProfile } from "@/lib/board-profile";
+import { profileBoard, applyPreferences, selectLiveWidgets, askedForElsewhere, columnCandidates, type BoardProfile, type ColumnCandidate } from "@/lib/board-profile";
+import { CROSS_BOARD_MAX } from "@/lib/cross-board";
 import { readBoardPrefs } from "@/lib/board-prefs";
 import { sanitizeSpec, defaultSpec, ensureMentionedColumns, type DashboardSpec } from "@/lib/dashboard-spec";
 import { rateLimit, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit";
@@ -153,69 +154,58 @@ ${JSON.stringify(sliceColumns(profile))}`;
     profile
   ).widgets;
 
-  // The honest sentence + the cross-board offer (בקשת מיטל: "סטטוס טיפול"
-  // לא בלוח הכללי אבל כן בלוח של כל בית ספר — תציג לפי בית ספר): when the
-  // purpose names no column ON THIS BOARD, check the account's other boards —
-  // columns only, one cheap query, no items. One hit → say where it lives.
-  // Two or more → offer the real answer: one dashboard slicing that column
-  // ACROSS all the boards that carry it. A generic purpose produces no noise.
+  // The honest sentence + THE CHOICE (מיטל, 5.9).
+  //
+  // When the purpose names a column this board cannot answer, the account's
+  // other boards are searched — columns only, one cheap query, no items. What
+  // comes back is usually not one answer but several: on the real account
+  // "מה הבוגרים עושים היום" matched five different column titles.
+  //
+  // The route used to pick one of those five and say nothing about the other
+  // four; the user met the guess as the name of a finished dashboard, too late
+  // to disagree. Guessing out of a finite list that can simply be SHOWN is a
+  // design failure, so the list travels to the screen. The top-ranked
+  // candidate is still the engine's own choice — it arrives preselected, as a
+  // proposal rather than a verdict. A generic purpose still produces nothing.
   let note: { text: string; boardId: string; boardName: string } | null = null;
-  let cross: { column: string; boardIds: string[]; boardNames: string[] } | null = null;
-  // The gate used to be "the purpose mentions NO column of this board".
-  // A purpose asking for two things, one of them present, satisfied it — and
-  // the absent half was dropped in silence (מיטל 5.9: "סטטוס טיפול של כל
-  // הבוגרים" on a board that has "בית ספר" and no treatment status). The
-  // question is per column now, so one available thing no longer hides an
-  // unavailable one. Still one cheap columns-only query, and still nothing at
-  // all for a purpose that names no column anywhere.
+  let candidates: ColumnCandidate[] = [];
   if (purpose) {
     try {
       const list = await mondayQuery(
         // 20 was enough when this only had to find ONE board holding the column.
         // It is not enough to COUNT them: an org with a board per school can
         // easily pass twenty, and a truncated list turns "it lives on all of
-        // them" into "it lives on that one". Columns only, still no items.
-        `query { boards(limit: 100, order_by: used_at, state: active) { id name columns { title } } }`,
+        // them" into "it lives on that one". Columns only, still no items —
+        // items_count is Monday's own counter, not a read of the rows.
+        `query { boards(limit: 100, order_by: used_at, state: active) { id name items_count columns { title type } } }`,
         guard.token
       );
-      const others = ((list?.boards ?? []) as { id: string; name: string; columns?: { title: string }[] }[])
+      const others = ((list?.boards ?? []) as { id: string; name: string; items_count?: number; columns?: { title: string; type: string }[] }[])
         .filter((b) => String(b.id) !== boardId)
-        .map((b) => ({ id: String(b.id), name: b.name, titles: (b.columns ?? []).map((c) => c.title) }));
+        .map((b) => ({
+          boardId: String(b.id),
+          boardName: b.name,
+          columns: (b.columns ?? []).map((c) => ({ title: c.title, type: c.type })),
+          rows: typeof b.items_count === "number" ? b.items_count : 0,
+        }));
+
       const hits = askedForElsewhere(
         purpose,
         profile.columns.map((c) => c.title),
-        others.map((b) => ({ boardId: b.id, boardName: b.name, titles: b.titles }))
+        others.map((b) => ({ boardId: b.boardId, boardName: b.boardName, titles: b.columns.map((c) => c.title) }))
       );
 
-      if (hits.length) {
-        const hit = hits[0];
+      candidates = columnCandidates(hits, others);
+      if (candidates.length) {
+        const top = candidates[0];
         note = {
           text:
-            hits.length === 1
-              ? `בלוח "${profile.boardName}" אין עמודת "${hit.column}" — היא קיימת בלוח "${hit.boardName}". ההצעה למטה נבנתה ממה שכן קיים כאן.`
-              : `בלוח "${profile.boardName}" אין עמודת "${hit.column}" — היא קיימת ב-${hits.length} לוחות אחרים. אפשר להציג אותה מכולם יחד, בפילוח לפי לוח.`,
-          boardId: hit.boardId,
-          boardName: hit.boardName,
+            candidates.length === 1 && top.boards.length === 1
+              ? `בלוח "${profile.boardName}" אין עמודת "${top.column}" — היא קיימת בלוח "${top.boards[0].boardName}". ההצעה למטה נבנתה ממה שכן קיים כאן.`
+              : `בלוח "${profile.boardName}" אין את מה שביקשתם. מצאתי ${candidates.length === 1 ? "עמודה אחת" : `${candidates.length} עמודות`} בלוחות אחרים שיכולות לענות על זה — בחרו איזו:`,
+          boardId: top.boards[0].boardId,
+          boardName: top.boards[0].boardName,
         };
-        if (hits.length >= 2) {
-          // Which spelling to send to every board — measured, not guessed.
-          // "Shortest title wins" used to decide this, and one board holding a
-          // column called "היום" outvoted five holding "מה עושה היום".
-          const column = canonicalColumn(hits.flatMap((h) => h.columns), others);
-          // Carry only the boards that can actually answer under that name, so
-          // the count in the offer is the count that will render.
-          const reachable = hits.filter((h) =>
-            others.find((o) => o.id === h.boardId)?.titles
-              .some((t) => columnMentioned(t, column!) || columnMentioned(column!, t))
-          );
-          if (column && reachable.length >= 2) {
-            cross = {
-              column,
-              boardIds: reachable.map((h) => h.boardId),
-              boardNames: reachable.map((h) => h.boardName),
-            };
-          }
-        }
       }
     } catch { /* the note is a nicety — its absence must not fail the proposal */ }
   }
@@ -224,7 +214,10 @@ ${JSON.stringify(sliceColumns(profile))}`;
   // name — one vocabulary, so the screen can never propose what the save
   // would reject.
   return NextResponse.json({
-    spec, menu, usedAi, boardName: profile.boardName, note, cross,
+    spec, menu, usedAi, boardName: profile.boardName, note, candidates,
+    // The screen must be able to say "10 of your 11 boards" out loud rather
+    // than let the eleventh vanish inside the save.
+    crossBoardMax: CROSS_BOARD_MAX,
     sliceCols: sliceColumns(profile),
   });
 }
