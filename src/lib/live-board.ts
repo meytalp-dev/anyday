@@ -69,14 +69,29 @@ function kpisFor(boards: Board[]) {
   }).slice(0, 4);
 }
 
-/** The names behind each segment of a breakdown. Computed here rather than in
- *  the browser, because it is the same walk over the items either way. */
-function drillFor(board: Board, colTitle: string): Record<string, string[]> | undefined {
+/**
+ * The names behind each segment. Computed here rather than in the browser,
+ * because it is the same walk over the items either way.
+ *
+ * It must group the items EXACTLY as the widget did, or the map's keys are not
+ * the labels on screen and every row silently refuses to open. Two ways that
+ * went wrong on a real board:
+ *
+ *  - it read `values.find(colId === c.id).text` while the widget reads
+ *    `valueOf`, which also matches a value by its title. On a board whose
+ *    values carry a different colId, every label came back with no names.
+ *  - the empty bucket is called "— ריק —" in a breakdown and "— ללא —" in an
+ *    owner split. Hard-coding one of them left the other unopenable.
+ *
+ * So it takes the same `valueOf` and the caller's empty label, and the test
+ * asserts key-for-label rather than merely "a drill exists".
+ */
+function drillFor(board: Board, colTitle: string, emptyLabel: string): Record<string, string[]> | undefined {
   const c = board.columns.find((x) => x.title === colTitle);
   if (!c) return undefined;
   const out: Record<string, string[]> = {};
   for (const it of board.items) {
-    const v = it.values.find((x) => x.colId === c.id)?.text || "— ריק —";
+    const v = BI.valueOf(it, c) || emptyLabel;
     (out[v] ||= []).push(it.name);
   }
   return out;
@@ -104,8 +119,13 @@ export function buildLiveBoard(inputs: LiveBoardInput[]): LiveBoardData {
       let drill: Record<string, string[]> | undefined;
       if (lw.kind === "breakdown" && lw.col) {
         w = BI.breakdown(board, lw.col);
-        if (w) drill = drillFor(board, lw.col);
-      } else if (lw.kind === "byOwner" && lw.col) w = BI.byOwner(board, lw.col);
+        if (w) drill = drillFor(board, lw.col, "— ריק —");
+      } else if (lw.kind === "byOwner" && lw.col) {
+        // The screen offers to open an owner split too, so it needs the names
+        // as much as a breakdown does. Its empty bucket is worded differently.
+        w = BI.byOwner(board, lw.col);
+        if (w) drill = drillFor(board, lw.col, "— ללא —");
+      }
       else if (lw.kind === "numberSummary" && lw.col) w = BI.numberSummary(board, lw.col);
       else if (lw.kind === "list") w = BI.list(board);
       if (w) charts.push({ ...w, title: `${w.title}${suffix}`, drill, key: widgetKey(lw), boardId: board.id, pinned: lw.pinned });

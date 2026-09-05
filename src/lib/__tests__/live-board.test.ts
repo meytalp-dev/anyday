@@ -153,3 +153,54 @@ describe("buildLiveBoard — קלט קצה", () => {
     expect(d.charts.every((c) => c.kind !== "attention")).toBe(true);
   });
 });
+
+/* ── פתיחת השמות שמאחורי מספר ─────────────────────────────────────────────
+   מיטל, 5.9, על בורד אמיתי: "חלק מהשמות נפתחים טוב — חלק לא."
+
+   הסיבה: המסך מציע לפתוח שמות לשני סוגי כרטיסים (`breakdown` ו-`byOwner`),
+   אבל רשימת השמות נבנתה רק לאחד מהם. כרטיס "חלוקה לפי אחראי" הראה מספרים
+   שאי אפשר ללחוץ עליהם, בלי שום היגיון גלוי.
+
+   הטסט הזה נועל את השניים זה לזה: **לכל תווית שכרטיס מציג חייבת להיות רשימת
+   שמות תואמת**. זו הדרישה האמיתית — לא "קיים drill", אלא שהמפתחות שלו הם
+   בדיוק התוויות שעל המסך. אחרת הם יכולים להתפצל שוב בשקט. */
+describe("drill — כל מספר על המסך נפתח לשמות שמאחוריו", () => {
+  const openable = (kind: string) => kind === "breakdown" || kind === "byOwner";
+
+  it("לכל כרטיס שאפשר לפתוח יש רשימת שמות", () => {
+    const { charts } = buildLiveBoard([{ board: board(), prefs: {} }]);
+    const cards = charts.filter((c) => openable(c.kind));
+    expect(cards.length).toBeGreaterThan(0);
+    for (const c of cards) {
+      expect(c.drill, `לכרטיס "${c.title}" (${c.kind}) אין רשימת שמות`).toBeTruthy();
+    }
+  });
+
+  it("המפתחות הם בדיוק התוויות שמוצגות — כולל 'ריק' ו'ללא'", () => {
+    const { charts } = buildLiveBoard([{ board: board(), prefs: {} }]);
+    for (const c of charts.filter((x) => openable(x.kind))) {
+      const rows = (c.data as { rows: { label: string; n: number }[] }).rows ?? [];
+      for (const r of rows) {
+        const names = c.drill?.[r.label];
+        expect(names, `"${c.title}" — לשורה "${r.label}" אין שמות`).toBeTruthy();
+        expect(names!.length, `"${c.title}" — "${r.label}" מציג ${r.n} אך יש ${names!.length} שמות`).toBe(r.n);
+      }
+    }
+  });
+
+  it("עמודה שהערכים שלה מזוהים לפי כותרת ולא לפי מזהה — עדיין נפתחת", () => {
+    // valueOf מתאים גם לפי title; drillFor התאים רק לפי colId, ולכן לוח כזה
+    // הציג תוויות בלי שמות מאחוריהן.
+    const b = board();
+    b.items = b.items.map((it) => ({
+      ...it,
+      values: it.values.map((v) => (v.colId === "st" ? { ...v, colId: "different-id" } : v)),
+    }));
+    const { charts } = buildLiveBoard([{ board: b, prefs: {} }]);
+    const st = charts.find((c) => c.kind === "breakdown");
+    if (st) {
+      const rows = (st.data as { rows: { label: string }[] }).rows ?? [];
+      for (const r of rows) expect(st.drill?.[r.label], `"${r.label}" בלי שמות`).toBeTruthy();
+    }
+  });
+});
