@@ -30,6 +30,8 @@ function noStore(json: unknown, init?: { status?: number }) {
   return NextResponse.json(json, { status: init?.status ?? 200, headers: { "Cache-Control": "no-store" } });
 }
 
+type Svc = NonNullable<ReturnType<typeof createServiceClient>>;
+
 const MISSING_TABLE = "טבלת ההזמנות לא קיימת עדיין. הריצו את supabase-schema-v8.sql ב-Supabase.";
 const isMissingTable = (msg?: string) =>
   !!msg && msg.includes("org_invites") && (msg.includes("does not exist") || msg.includes("schema cache"));
@@ -138,43 +140,48 @@ export async function POST(req: NextRequest) {
   return noStore({ ok: true, orgName, role: verdict.role });
 }
 
-/** PostgREST's "no such table", which is a real zero rather than a mystery. */
-function isMissingRelation(err: { code?: string; message?: string } | null): boolean {
-  if (!err) return false;
-  return err.code === "PGRST205" || err.code === "42P01" ||
-    (err.message ?? "").includes("Could not find the table");
-}
-
-/** A row count, or -1 when the answer genuinely is not known. */
-function countOrUnknown(res: { count: number | null; error: { code?: string; message?: string } | null }): number {
-  if (isMissingRelation(res.error)) return 0;
-  if (res.error || res.count === null) return -1;
-  return res.count;
+/**
+ * "Does this table have a row for this org?" — as a plain select, deliberately.
+ *
+ * The first version asked for a `head: true` exact count, and on a table that
+ * does not exist supabase-js returned `count: null, error: null`: a missing
+ * relation was indistinguishable from a failed query, so the check called
+ * every organisation non-empty and refused every join. A plain select reports
+ * PGRST205 properly, which is the difference the decision rests on.
+ *
+ * Returns the number of rows found (capped by `limit`), or -1 for "unknown".
+ */
+async function rowsIn(
+  service: Svc, table: string, orgId: string, limit: number
+): Promise<number> {
+  const { data, error } = await service.from(table).select("id").eq("org_id", orgId).limit(limit);
+  if (error) {
+    // A table that was never created is holding nothing. Definitively zero,
+    // not a mystery — otherwise one un-run migration blocks every join.
+    if (error.code === "PGRST205" || error.code === "42P01") return 0;
+    return -1;
+  }
+  return data?.length ?? -1;
 }
 
 /** Is there anything in this organization worth keeping? */
-async function orgIsEmpty(
-  service: NonNullable<ReturnType<typeof createServiceClient>>,
-  orgId: string
-): Promise<boolean> {
+async function orgIsEmpty(service: Svc, orgId: string): Promise<boolean> {
   const [members, org, dashboards, sheets] = await Promise.all([
-    service.from("org_users").select("user_id", { count: "exact", head: true }).eq("org_id", orgId),
+    service.from("org_users").select("user_id").eq("org_id", orgId).limit(2),
     service.from("organizations").select("monday_token_encrypted").eq("id", orgId).maybeSingle(),
-    service.from("dashboards").select("id", { count: "exact", head: true }).eq("org_id", orgId),
-    service.from("sheet_sources").select("id", { count: "exact", head: true }).eq("org_id", orgId),
+    rowsIn(service, "dashboards", orgId, 1),
+    rowsIn(service, "sheet_sources", orgId, 1),
   ]);
 
-  // Unknowns count AGAINST deleting — but "the table does not exist" is not an
-  // unknown. A table that was never created is holding nothing, definitively,
-  // and treating that as "might hold something" refuses every join on a
-  // deployment where one migration has not been run yet. Anything else that
-  // errors really is unknown, and unknown means we do not delete.
-  const saved = countOrUnknown(dashboards) + countOrUnknown(sheets);
-  if (members.error || org.error || members.count === null || saved < 0) return false;
+  // Unknowns count AGAINST deleting: we only remove an organisation we can
+  // prove is empty, because the alternative is deleting somebody's work to
+  // save them a login.
+  if (members.error || org.error || !members.data) return false;
+  if (dashboards < 0 || sheets < 0) return false;
 
   return canReplaceOrg({
-    memberCount: members.count,
+    memberCount: members.data.length,
     mondayConnected: Boolean(org.data?.monday_token_encrypted),
-    savedThings: saved,
+    savedThings: dashboards + sheets,
   });
 }
