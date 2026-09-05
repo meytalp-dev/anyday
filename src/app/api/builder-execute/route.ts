@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { BuilderBlueprint, BuilderBoard, BuilderColumn } from "@/types/builder";
-import { mondayQuery, requireMonday } from "@/lib/monday-server";
+import { mondayQuery, requireRole } from "@/lib/monday-server";
 import { getOrgContext } from "@/lib/session";
 import { createServiceClient } from "@/lib/supabase-server";
 
@@ -123,7 +123,8 @@ async function buildBoard(board: BuilderBoard, apiToken: string): Promise<BoardR
 export async function POST(req: NextRequest) {
   try {
     // Auth + Monday connection are resolved server-side; no client token.
-    const guard = await requireMonday();
+    // הפעולה מקימה בורד בחשבון האמיתי, ולכן צופה לא נכנס לכאן.
+  const guard = await requireRole("member");
     if (!guard.ok) {
       return NextResponse.json({ error: guard.error }, { status: guard.status });
     }

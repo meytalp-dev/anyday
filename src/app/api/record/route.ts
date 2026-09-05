@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { mondayQuery, requireMonday } from "@/lib/monday-server";
+import { mondayQuery, requireRole } from "@/lib/monday-server";
 import { parseBoardDate } from "@/lib/board-intelligence";
 
 /**
@@ -24,7 +24,8 @@ interface RowIn { name?: unknown; values?: unknown }
 const IMPORT_MAX = 200;
 
 export async function POST(req: NextRequest) {
-  const guard = await requireMonday();
+  // רשומות נכתבות ונמחקות מהבורד האמיתי, ולכן צופה לא נכנס לכאן.
+  const guard = await requireRole("member");
   if (!guard.ok) return NextResponse.json({ error: guard.error }, { status: guard.status });
   const b = await req.json().catch(() => ({}));
   const { op } = b;

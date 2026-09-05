@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { mondayQuery, requireMonday } from "@/lib/monday-server";
+import { mondayQuery, requireRole } from "@/lib/monday-server";
 import { fetchBoards, parseBoardIds } from "@/lib/board-fetch";
 import {
   resolveName, valueCandidates, matchLabel, escapeHtml, labelsByColumn, STATUS_COLUMNS_QUERY,
@@ -17,7 +17,8 @@ import {
  * a GraphQL variable rather than being pasted into the mutation string.
  */
 export async function POST(req: NextRequest) {
-  const guard = await requireMonday();
+  // הפעולה משנה סטטוס בבורד האמיתי, ולכן צופה לא נכנס לכאן.
+  const guard = await requireRole("member");
   if (!guard.ok) return NextResponse.json({ error: guard.error }, { status: guard.status });
 
   const body = await req.json().catch(() => ({}));

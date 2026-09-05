@@ -2,6 +2,7 @@
 // user's org (via getMondayToken) — it is never accepted from the client.
 import { cookies } from "next/headers";
 import { getOrgContext, getMondayToken } from "./session";
+import { atLeast, forbiddenMessage, type Role } from "./roles";
 
 const MONDAY_API = "https://api.monday.com/v2";
 
@@ -80,7 +81,7 @@ export async function mondayQuery(
 }
 
 export type MondayGuardResult =
-  | { ok: true; token: string; orgId: string }
+  | { ok: true; token: string; orgId: string; role: Role }
   | { ok: false; status: number; error: string };
 
 /**
@@ -116,7 +117,7 @@ export async function requireMonday(): Promise<MondayGuardResult> {
   const personal = process.env.MONDAY_PERSONAL_TOKEN;
   if (personal && personal.trim().length > 20) {
     if (personalTokenAllowed()) {
-      return { ok: true, token: personal.trim(), orgId: "personal" };
+      return { ok: true, token: personal.trim(), orgId: "personal", role: "admin" };
     }
     if (!warnedAboutPersonalToken) {
       warnedAboutPersonalToken = true;
@@ -139,7 +140,7 @@ export async function requireMonday(): Promise<MondayGuardResult> {
     try {
       const cookieToken = (await cookies()).get("anyday_monday_token")?.value;
       if (cookieToken && cookieToken.length > 20) {
-        return { ok: true, token: cookieToken, orgId: "personal" };
+        return { ok: true, token: cookieToken, orgId: "personal", role: "admin" };
       }
     } catch { /* cookies() unavailable in some contexts — fall through */ }
   }
@@ -151,5 +152,22 @@ export async function requireMonday(): Promise<MondayGuardResult> {
   const token = await getMondayToken(ctx.orgId);
   if (!token)
     return { ok: false, status: 409, error: MONDAY_REAUTH_MESSAGE };
-  return { ok: true, token, orgId: ctx.orgId };
+  return { ok: true, token, orgId: ctx.orgId, role: (ctx.role as Role) ?? "viewer" };
+}
+
+/**
+ * `requireMonday`, plus "and you must be at least this role".
+ *
+ * The routes that write to the customer's real board call THIS. Three of them
+ * used to call the plain guard and never look at the role, which is how a
+ * viewer came to be able to delete records — the permission existed and simply
+ * was not asked about.
+ */
+export async function requireRole(min: Role): Promise<MondayGuardResult> {
+  const guard = await requireMonday();
+  if (!guard.ok) return guard;
+  if (!atLeast(guard.role, min)) {
+    return { ok: false, status: 403, error: forbiddenMessage(min) };
+  }
+  return guard;
 }

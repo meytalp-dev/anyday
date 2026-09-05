@@ -1,5 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { mondayQuery as mondayQueryWithToken, requireMonday } from "@/lib/monday-server";
+import { atLeast, forbiddenMessage } from "@/lib/roles";
+
+/**
+ * This route is a multiplexer: some actions read the board, some change it.
+ * A blanket role gate at the top would stop a viewer from READING, which is
+ * exactly what a viewer is for — so the gate is per action, and the list below
+ * is the one place that says which of them touch the customer's real data.
+ *
+ * Anything not listed is treated as a read. That is the safe direction here
+ * only because an unlisted action does not exist; a NEW writing action must be
+ * added to this set in the same commit that adds it.
+ */
+const WRITING_ACTIONS = new Set([
+  "automate", "archive_item", "change_value", "change_simple",
+  "create_item", "create_board",
+]);
 
 export async function POST(req: NextRequest) {
   try {
@@ -17,6 +33,10 @@ export async function POST(req: NextRequest) {
 
     const body = await req.json();
     const { action, boardId } = body;
+
+    if (WRITING_ACTIONS.has(action) && !atLeast(guard.role, "member")) {
+      return NextResponse.json({ error: forbiddenMessage("member") }, { status: 403 });
+    }
 
     if (action === "board") {
       if (!boardId) {
