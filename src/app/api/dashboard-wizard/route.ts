@@ -201,7 +201,7 @@ ${JSON.stringify(sliceColumns(profile))}`;
           // Which spelling to send to every board — measured, not guessed.
           // "Shortest title wins" used to decide this, and one board holding a
           // column called "היום" outvoted five holding "מה עושה היום".
-          const column = canonicalColumn(hits.map((h) => h.column), others);
+          const column = canonicalColumn(hits.flatMap((h) => h.columns), others);
           // Carry only the boards that can actually answer under that name, so
           // the count in the offer is the count that will render.
           const reachable = hits.filter((h) =>

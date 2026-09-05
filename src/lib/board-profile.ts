@@ -392,7 +392,7 @@ export function askedForElsewhere(
   purpose: string,
   localTitles: string[],
   others: { boardId: string; boardName: string; titles: string[] }[]
-): { boardId: string; boardName: string; column: string }[] {
+): { boardId: string; boardName: string; column: string; columns: string[] }[] {
   if (!purpose.trim()) return [];
 
   // "Available here" is judged with the same matcher the rest of the product
@@ -413,10 +413,19 @@ export function askedForElsewhere(
   //
   // A board is still reported once even if several of its columns match; the
   // first match is the one named, as before.
-  const out: { boardId: string; boardName: string; column: string }[] = [];
+  const out: { boardId: string; boardName: string; column: string; columns: string[] }[] = [];
   for (const b of others) {
-    const column = b.titles.find((t) => columnMentioned(t, purpose) && !answeredHere(t));
-    if (column) out.push({ boardId: b.boardId, boardName: b.boardName, column });
+    // EVERY matching title, not just the first one found.
+    //
+    // The first version took `find`, and a board holding both "היום" and
+    // "מה עושה היום" therefore offered only whichever came first in its column
+    // order. The caller picks the spelling to send to all boards from these
+    // candidates, so a title never collected is a title that can never win —
+    // and the request went out under the emptier of the two names.
+    const columns = b.titles.filter((t) => columnMentioned(t, purpose) && !answeredHere(t));
+    if (columns.length) {
+      out.push({ boardId: b.boardId, boardName: b.boardName, column: columns[0], columns });
+    }
   }
   return out;
 }

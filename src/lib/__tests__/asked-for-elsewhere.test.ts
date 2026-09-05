@@ -103,3 +103,25 @@ describe("canonicalColumn — הכתיב שמגיע לכי הרבה לוחות",
     expect(canonicalColumn(["  "], SCHOOLS)).toBeNull();
   });
 });
+
+/* לוח שיש בו שתי כותרות שמתאימות תורם את שתיהן כמועמדות. `find` החזיר רק את
+   הראשונה בסדר העמודות, ולכן "מה עושה היום" לא הגיע בכלל להכרעה — הבקשה יצאה
+   בשם "היום". כותרת שלא נאספה היא כותרת שלא יכולה לנצח. */
+describe("askedForElsewhere — כל הכותרות המתאימות, לא רק הראשונה", () => {
+  it("לוח עם שתי כותרות מתאימות מציע את שתיהן", () => {
+    const [hit] = askedForElsewhere("מה הבוגרים עושים היום", ["עיר"], [
+      { boardId: "b2", boardName: "בוגרי עכו", titles: ["היום", "מה עושה היום"] },
+    ]);
+    expect(hit.columns).toEqual(["היום", "מה עושה היום"]);
+  });
+
+  it("והכותרת המפורשת היא שנבחרת בסוף — לא זו שבמקרה ראשונה", () => {
+    const boards = [
+      { boardId: "b2", boardName: "עכו", titles: ["היום", "מה עושה היום"] },
+      { boardId: "b3", boardName: "אשקלון", titles: ["היום", "מה עושה היום"] },
+    ];
+    const hits = askedForElsewhere("מה הבוגרים עושים היום", ["עיר"], boards);
+    const chosen = canonicalColumn(hits.flatMap((h) => h.columns), boards);
+    expect(chosen).toBe("מה עושה היום");
+  });
+});
