@@ -138,6 +138,20 @@ export async function POST(req: NextRequest) {
   return noStore({ ok: true, orgName, role: verdict.role });
 }
 
+/** PostgREST's "no such table", which is a real zero rather than a mystery. */
+function isMissingRelation(err: { code?: string; message?: string } | null): boolean {
+  if (!err) return false;
+  return err.code === "PGRST205" || err.code === "42P01" ||
+    (err.message ?? "").includes("Could not find the table");
+}
+
+/** A row count, or -1 when the answer genuinely is not known. */
+function countOrUnknown(res: { count: number | null; error: { code?: string; message?: string } | null }): number {
+  if (isMissingRelation(res.error)) return 0;
+  if (res.error || res.count === null) return -1;
+  return res.count;
+}
+
 /** Is there anything in this organization worth keeping? */
 async function orgIsEmpty(
   service: NonNullable<ReturnType<typeof createServiceClient>>,
@@ -150,18 +164,17 @@ async function orgIsEmpty(
     service.from("sheet_sources").select("id", { count: "exact", head: true }).eq("org_id", orgId),
   ]);
 
-  // Every unknown counts AGAINST deleting. A failed count, a null count, a
-  // query that errored — each one means "we could not prove this org is
-  // empty", and the only safe reading of that is that it is not. Reading an
-  // error as zero would delete somebody's work to save them a login.
-  const failedToProve =
-    members.error || org.error || dashboards.error || sheets.error ||
-    members.count === null;
-  if (failedToProve) return false;
+  // Unknowns count AGAINST deleting — but "the table does not exist" is not an
+  // unknown. A table that was never created is holding nothing, definitively,
+  // and treating that as "might hold something" refuses every join on a
+  // deployment where one migration has not been run yet. Anything else that
+  // errors really is unknown, and unknown means we do not delete.
+  const saved = countOrUnknown(dashboards) + countOrUnknown(sheets);
+  if (members.error || org.error || members.count === null || saved < 0) return false;
 
   return canReplaceOrg({
-    memberCount: members.count ?? 2,
+    memberCount: members.count,
     mondayConnected: Boolean(org.data?.monday_token_encrypted),
-    savedThings: (dashboards.count ?? 1) + (sheets.count ?? 1),
+    savedThings: saved,
   });
 }
