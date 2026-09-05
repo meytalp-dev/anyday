@@ -420,3 +420,36 @@ export function askedForElsewhere(
   }
   return out;
 }
+
+/**
+ * Which spelling of the request to send to every board.
+ *
+ * A cross-board slice names ONE column and re-matches it against each board's
+ * local variant at render time, so the name it carries decides how many boards
+ * can answer. The first rule here was "the shortest matched title is the most
+ * canonical" — a guess, and a bad one: a single board with a column called
+ * "היום" beat five holding "מה עושה היום", and the resulting request then
+ * matched almost nothing. Meytal got a dashboard named "היום" לפי לוח and a
+ * warning that it was found on fewer than two boards.
+ *
+ * The criterion is not a proxy like length or frequency; it is the thing we
+ * actually want, and it is measurable: try each candidate spelling and keep
+ * the one the most boards can answer. Ties go to the longer title, which is
+ * the more specific of two names that reach equally far.
+ */
+export function canonicalColumn(
+  candidates: string[],
+  boards: { titles: string[] }[]
+): string | null {
+  const uniq = [...new Set(candidates.filter((c) => c.trim()))];
+  if (!uniq.length) return null;
+
+  const reach = (candidate: string) =>
+    boards.filter((b) =>
+      b.titles.some((t) => columnMentioned(t, candidate) || columnMentioned(candidate, t))
+    ).length;
+
+  return uniq
+    .map((c) => ({ c, n: reach(c) }))
+    .sort((a, b) => b.n - a.n || b.c.length - a.c.length)[0].c;
+}

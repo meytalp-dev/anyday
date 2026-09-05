@@ -21,7 +21,7 @@ import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { requireMonday, mondayQuery } from "@/lib/monday-server";
 import { fetchBoards } from "@/lib/board-fetch";
-import { profileBoard, applyPreferences, selectLiveWidgets, askedForElsewhere, type BoardProfile } from "@/lib/board-profile";
+import { profileBoard, applyPreferences, selectLiveWidgets, askedForElsewhere, canonicalColumn, columnMentioned, type BoardProfile } from "@/lib/board-profile";
 import { readBoardPrefs } from "@/lib/board-prefs";
 import { sanitizeSpec, defaultSpec, ensureMentionedColumns, type DashboardSpec } from "@/lib/dashboard-spec";
 import { rateLimit, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit";
@@ -198,10 +198,23 @@ ${JSON.stringify(sliceColumns(profile))}`;
           boardName: hit.boardName,
         };
         if (hits.length >= 2) {
-          // The shortest matched title is the most canonical spelling of the
-          // ask — it re-matches every board's local variant at render time.
-          const column = hits.map((h) => h.column).sort((a, b) => a.length - b.length)[0];
-          cross = { column, boardIds: hits.map((h) => h.boardId), boardNames: hits.map((h) => h.boardName) };
+          // Which spelling to send to every board — measured, not guessed.
+          // "Shortest title wins" used to decide this, and one board holding a
+          // column called "היום" outvoted five holding "מה עושה היום".
+          const column = canonicalColumn(hits.map((h) => h.column), others);
+          // Carry only the boards that can actually answer under that name, so
+          // the count in the offer is the count that will render.
+          const reachable = hits.filter((h) =>
+            others.find((o) => o.id === h.boardId)?.titles
+              .some((t) => columnMentioned(t, column!) || columnMentioned(column!, t))
+          );
+          if (column && reachable.length >= 2) {
+            cross = {
+              column,
+              boardIds: reachable.map((h) => h.boardId),
+              boardNames: reachable.map((h) => h.boardName),
+            };
+          }
         }
       }
     } catch { /* the note is a nicety — its absence must not fail the proposal */ }
