@@ -95,23 +95,33 @@ export async function POST(req: NextRequest) {
   const token = newInviteToken();
   const now = new Date();
 
-  // Re-inviting the same address replaces the live invitation rather than
-  // adding a second one: it is the same promise, and two valid links to the
-  // same seat is one link nobody can revoke.
+  // Re-inviting the same address replaces the LIVE invitation rather than
+  // adding a second one: it is the same promise, and two valid links to one
+  // seat is one link nobody can revoke.
+  //
+  // Deliberately a delete-then-insert and not an upsert. The uniqueness that
+  // matters here is partial — one PENDING invite per address, so that someone
+  // who accepted and later left can be invited again — and ON CONFLICT cannot
+  // target a partial index (42P10). Accepted rows are untouched by the delete,
+  // which is exactly the history worth keeping.
+  await service
+    .from("org_invites")
+    .delete()
+    .eq("org_id", ctx.orgId)
+    .eq("email", email)
+    .is("accepted_at", null);
+
   const { error } = await service
     .from("org_invites")
-    .upsert(
-      {
-        org_id: ctx.orgId,
-        email,
-        role,
-        token_hash: hashInviteToken(token),
-        invited_by: ctx.userId,
-        expires_at: expiryFrom(now),
-        accepted_at: null,
-      },
-      { onConflict: "org_id,email" }
-    );
+    .insert({
+      org_id: ctx.orgId,
+      email,
+      role,
+      token_hash: hashInviteToken(token),
+      invited_by: ctx.userId,
+      expires_at: expiryFrom(now),
+      accepted_at: null,
+    });
 
   if (error) {
     if (isMissingTable(error.message)) return noStore({ error: MISSING_TABLE }, { status: 503 });
